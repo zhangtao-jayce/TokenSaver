@@ -3,4 +3,6 @@
 from .planner import plan_task
 from .runtime import TokenSaver, record_agent_run
 
-__all__ = ["TokenSaver", "plan_task", "record_agent_run"]
+__version__ = "0.1.0"
+
+__all__ = ["TokenSaver", "__version__", "plan_task", "record_agent_run"]

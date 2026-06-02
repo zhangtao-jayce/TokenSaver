@@ -6,6 +6,7 @@ import json
 import sys
 from typing import Any
 
+from . import __version__
 from .brief import generate_repair_brief
 from .diagnosis import diagnose_run
 from .planner import plan_task
@@ -122,7 +123,7 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
             request_id,
             {
                 "protocolVersion": "2024-11-05",
-                "serverInfo": {"name": "tokensaver", "version": "0.1.0"},
+                "serverInfo": {"name": "tokensaver", "version": __version__},
                 "capabilities": {"tools": {}},
             },
         )

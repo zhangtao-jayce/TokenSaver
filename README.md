@@ -214,6 +214,8 @@ Codex / Claude Code can use these tools to inspect a task, record Agent runs, re
 
 - [Integration Guide](docs/集成指南.md)
 - [Open Source Scope](OPEN_SOURCE_SCOPE.md)
+- [Version Management](VERSION.md)
+- [Changelog](CHANGELOG.md)
 - [Security Policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 

@@ -1,10 +1,4 @@
-"""Minimal stdio JSON-RPC server exposing TokenSaver tools.
-
-This is intentionally dependency-free for the first cut. It implements the
-small subset needed to exercise tools/list and tools/call-style flows. A future
-iteration can swap this for the official MCP Python SDK while preserving the
-core planner API.
-"""
+"""Dependency-free stdio JSON-RPC server exposing TokenSaver tools."""
 
 from __future__ import annotations
 

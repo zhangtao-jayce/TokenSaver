@@ -8,29 +8,11 @@ It helps builders trace Agent runs locally, diagnose token/context/model/tool wa
 
 **TokenSaver 是一个帮助 Agent 应用开发者观察真实运行中的 Token ROI 问题，并把低效模式转化为 Codex / Claude Code 可执行优化任务的本地优先诊断工具。**
 
-## Start Here
+## Start Here: Let Your Coding Agent Do It
 
-If you built an Agent app with Codex / Claude Code and want TokenSaver inside that app, follow these steps.
+If you are a normal user, you do not need to manually install, inspect, or wire TokenSaver first.
 
-### 1. Install TokenSaver In Your Agent App
-
-From your Agent application's project directory:
-
-```bash
-pip install git+https://github.com/zhangtao-jayce/TokenSaver.git
-```
-
-For local development against this repository:
-
-```bash
-git clone https://github.com/zhangtao-jayce/TokenSaver.git
-cd TokenSaver
-python3 -m unittest discover -s tests
-```
-
-### 2. Ask Codex / Claude Code To Integrate It
-
-Copy this into Codex / Claude Code inside your Agent app:
+Open your Agent application in Codex / Claude Code, then copy this prompt:
 
 ```text
 Please integrate TokenSaver into this Agent application.
@@ -44,27 +26,32 @@ Read:
 
 Requirements:
 1. Find the main entrypoint where this Agent handles a user message.
-2. Install TokenSaver if needed: pip install git+https://github.com/zhangtao-jayce/TokenSaver.git
+2. Install TokenSaver in this project if needed:
+   pip install git+https://github.com/zhangtao-jayce/TokenSaver.git
 3. Add Agent Runtime Trace around each user-message run.
 4. Record app, channel, user_message, task_type, route, context_items, tool_calls, model_calls, answer, and quality_signals when available.
 5. Keep all TokenSaver data local. Do not upload prompts, context, traces, or tool outputs.
-6. After one Agent run, confirm these files exist:
+6. Run or add a minimal demo/test message that triggers one Agent run.
+7. Confirm these files exist:
    - .tokensaver/runs.jsonl
    - .tokensaver/reports/latest.md
    - .tokensaver/briefs/latest.md
    - .tokensaver/panel/index.html
-7. Add a minimal test or demo command that proves TokenSaver trace generation works.
+8. Show me the contents of:
+   - .tokensaver/reports/latest.md
+   - .tokensaver/briefs/latest.md
+9. Tell me the command to open or view .tokensaver/panel/index.html.
+10. Add a minimal test or demo command that proves TokenSaver trace generation works.
 ```
 
-### 3. Run Your Agent And Read The Results
+That is the main deployment path. TokenSaver is designed so the coding agent can read this repository and perform the integration for you.
 
-After your Agent handles one user message:
+After integration, your coding agent should show you:
 
-```bash
-cat .tokensaver/reports/latest.md
-cat .tokensaver/briefs/latest.md
-python3 -m tokensaver.cli latest --kind panel
-```
+- the latest run summary
+- the repair brief
+- the local activity panel path
+- the test or demo command it added
 
 TokenSaver writes results locally:
 
@@ -77,6 +64,24 @@ TokenSaver writes results locally:
 ```
 
 The `latest.md` report is for users. The repair brief is for Codex / Claude Code to improve the Agent app.
+
+## Manual Commands For Coding Agents
+
+These commands are mainly for Codex / Claude Code to use while integrating TokenSaver.
+
+Install from GitHub:
+
+```bash
+pip install git+https://github.com/zhangtao-jayce/TokenSaver.git
+```
+
+Read generated results:
+
+```bash
+cat .tokensaver/reports/latest.md
+cat .tokensaver/briefs/latest.md
+python3 -m tokensaver.cli latest --kind panel
+```
 
 ## Minimal Python Integration
 

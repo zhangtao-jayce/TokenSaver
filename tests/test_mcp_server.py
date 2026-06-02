@@ -1,0 +1,94 @@
+import unittest
+import tempfile
+
+from tokensaver.mcp_server import handle_request
+
+
+class McpServerTests(unittest.TestCase):
+    def test_tools_list(self):
+        response = handle_request({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        self.assertEqual(response["id"], 1)
+        names = [tool["name"] for tool in response["result"]["tools"]]
+        self.assertIn("tokensaver.plan_task", names)
+        self.assertIn("tokensaver.estimate_tokens", names)
+
+    def test_plan_tool_call(self):
+        response = handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "tokensaver.plan_task",
+                    "arguments": {
+                        "user_message": "帮我分析 MU 今天为什么突然涨，要不要减仓",
+                        "model": "anthropic/claude-sonnet-4-6",
+                    },
+                },
+            }
+        )
+        text = response["result"]["content"][0]["text"]
+        self.assertIn("intraday_anomaly_attribution", text)
+        self.assertIn("requires_realtime_data", text)
+
+    def test_runtime_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            record_response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "tokensaver.record_agent_run",
+                        "arguments": {
+                            "store_dir": tmp,
+                            "run": {
+                                "app": "goldfinger",
+                                "channel": "feishu",
+                                "user_message": "MU 怎么了？",
+                                "task_type": "quick_quote_check",
+                                "route": "deep_stock_research",
+                                "context_items": [
+                                    {
+                                        "name": "full_history_log",
+                                        "kind": "history",
+                                        "content": "history " * 3000,
+                                    }
+                                ],
+                            },
+                        },
+                    },
+                }
+            )
+            text = record_response["result"]["content"][0]["text"]
+            self.assertIn("wrong_route_for_task", text)
+
+            latest_response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "tokensaver.get_latest_runs",
+                        "arguments": {"store_dir": tmp, "limit": 1},
+                    },
+                }
+            )
+            self.assertIn("goldfinger", latest_response["result"]["content"][0]["text"])
+
+            brief_response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "tokensaver.generate_repair_brief",
+                        "arguments": {"store_dir": tmp},
+                    },
+                }
+            )
+            self.assertIn("TokenSaver Repair Brief", brief_response["result"]["content"][0]["text"])
+
+
+if __name__ == "__main__":
+    unittest.main()

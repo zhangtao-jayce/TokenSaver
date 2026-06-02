@@ -1,0 +1,41 @@
+{
+  "app": "goldfinger",
+  "channel": "feishu",
+  "user_message": "MU 怎么了？",
+  "task_type": "quick_quote_check",
+  "route": "deep_stock_research",
+  "context_items": [
+    {
+      "name": "full_history_log",
+      "kind": "history",
+      "content": "history history history history history history history history history history"
+    },
+    {
+      "name": "price",
+      "kind": "market_data",
+      "content": "MU current price and intraday move"
+    }
+  ],
+  "tool_calls": [
+    {
+      "name": "price",
+      "output_text": "price payload",
+      "latency_ms": 120,
+      "cached": false
+    },
+    {
+      "name": "price",
+      "output_text": "price payload",
+      "latency_ms": 110,
+      "cached": false
+    }
+  ],
+  "model_calls": [
+    {
+      "model": "anthropic/claude-sonnet-4-6",
+      "input_text": "prompt with market data and history",
+      "output_text": "answer"
+    }
+  ],
+  "answer": "MU intraday move needs a concise explanation with source attribution."
+}

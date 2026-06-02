@@ -1,12 +1,123 @@
 # TokenSaver
 
-TokenSaver is an open-source sidecar for observing and optimizing AI Agent application ROI.
+TokenSaver is an open-source runtime ROI diagnosis toolkit for AI Agent applications.
+
+It helps builders trace Agent runs locally, diagnose token/context/model/tool waste, and generate repair briefs that Codex / Claude Code can use to improve the Agent application.
 
 中文定位：
 
-**TokenSaver 是一个帮助 Agent 应用开发者观察真实运行中的 Token ROI 问题，并把低效模式转化为 Codex / Claude Code 可执行优化任务的本地优先诊断层。**
+**TokenSaver 是一个帮助 Agent 应用开发者观察真实运行中的 Token ROI 问题，并把低效模式转化为 Codex / Claude Code 可执行优化任务的本地优先诊断工具。**
 
-它默认不打断用户主流程，通过低打扰的侧边面板或 MCP 工具展示 Agent 应用每次运行的 Token 成本、上下文浪费、模型策略、质量风险和优化机会；只有在高成本或高风险场景下，才建议用户采取优化动作，并生成可交给 Codex / Claude Code 的改造 brief。
+## Start Here
+
+If you built an Agent app with Codex / Claude Code and want TokenSaver inside that app, follow these steps.
+
+### 1. Install TokenSaver In Your Agent App
+
+From your Agent application's project directory:
+
+```bash
+pip install git+https://github.com/zhangtao-jayce/TokenSaver.git
+```
+
+For local development against this repository:
+
+```bash
+git clone https://github.com/zhangtao-jayce/TokenSaver.git
+cd TokenSaver
+python3 -m unittest discover -s tests
+```
+
+### 2. Ask Codex / Claude Code To Integrate It
+
+Copy this into Codex / Claude Code inside your Agent app:
+
+```text
+Please integrate TokenSaver into this Agent application.
+
+TokenSaver repository:
+https://github.com/zhangtao-jayce/TokenSaver
+
+Read:
+- README.md
+- docs/集成指南.md
+
+Requirements:
+1. Find the main entrypoint where this Agent handles a user message.
+2. Install TokenSaver if needed: pip install git+https://github.com/zhangtao-jayce/TokenSaver.git
+3. Add Agent Runtime Trace around each user-message run.
+4. Record app, channel, user_message, task_type, route, context_items, tool_calls, model_calls, answer, and quality_signals when available.
+5. Keep all TokenSaver data local. Do not upload prompts, context, traces, or tool outputs.
+6. After one Agent run, confirm these files exist:
+   - .tokensaver/runs.jsonl
+   - .tokensaver/reports/latest.md
+   - .tokensaver/briefs/latest.md
+   - .tokensaver/panel/index.html
+7. Add a minimal test or demo command that proves TokenSaver trace generation works.
+```
+
+### 3. Run Your Agent And Read The Results
+
+After your Agent handles one user message:
+
+```bash
+cat .tokensaver/reports/latest.md
+cat .tokensaver/briefs/latest.md
+python3 -m tokensaver.cli latest --kind panel
+```
+
+TokenSaver writes results locally:
+
+```text
+.tokensaver/
+  runs.jsonl
+  reports/latest.md
+  briefs/latest.md
+  panel/index.html
+```
+
+The `latest.md` report is for users. The repair brief is for Codex / Claude Code to improve the Agent app.
+
+## Minimal Python Integration
+
+```python
+from tokensaver import TokenSaver
+from tokensaver.integrations import trace_llm_call
+
+tokensaver = TokenSaver(app="my-agent", channel="slack")
+
+def handle_message(message: str) -> str:
+    with tokensaver.run(user_message=message) as run:
+        run.set_task(task_type="quick_quote_check", route="deep_research")
+        run.add_context("price", "market context ...", kind="market_data")
+
+        prompt = f"Answer: {message}"
+        answer = trace_llm_call(
+            run,
+            model="anthropic/claude-sonnet-4-6",
+            input_text=prompt,
+            call=lambda: call_llm(prompt),
+        )
+        run.record_answer(answer)
+        return answer
+```
+
+## Try TokenSaver Without Modifying Your App
+
+Record and diagnose the example run:
+
+```bash
+cat examples/run.json | python3 -m tokensaver.cli record-run
+python3 -m tokensaver.cli latest --kind summary
+python3 -m tokensaver.cli latest --kind brief
+python3 -m tokensaver.cli latest --kind panel
+```
+
+Run the Goldfinger-like example:
+
+```bash
+python3 examples/goldfinger_agent.py
+```
 
 ## Core Idea
 
@@ -157,7 +268,7 @@ See:
 - [TokenSaver Open Source Scope](OPEN_SOURCE_SCOPE.md)
 - [TokenSaver 集成指南](docs/集成指南.md)
 
-## Quick Start
+## CLI And MCP
 
 Current implemented features are:
 
@@ -200,48 +311,6 @@ python3 -m tokensaver.mcp_server
 ```
 
 When used through MCP, Codex / Claude Code should call `tokensaver.plan_task` or `tokensaver.estimate_tokens`, then summarize the returned JSON for the user.
-
-Record and diagnose an Agent run from JSON:
-
-```bash
-cat examples/run.json | python3 -m tokensaver.cli record-run
-```
-
-Read the latest generated artifacts:
-
-```bash
-python3 -m tokensaver.cli latest --kind summary
-python3 -m tokensaver.cli latest --kind brief
-python3 -m tokensaver.cli latest --kind run
-python3 -m tokensaver.cli latest --kind panel
-```
-
-Use the runtime SDK inside an Agent application:
-
-```python
-from tokensaver import TokenSaver
-
-tokensaver = TokenSaver(app="goldfinger", channel="feishu")
-
-def handle_message(message: str) -> str:
-    with tokensaver.run(user_message=message, task_type="quick_quote_check") as run:
-        run.set_task(route="deep_stock_research")
-        run.add_context("price", "MU current price ...", kind="market_data")
-        answer = "Short answer ..."
-        run.record_model_call(
-            model="anthropic/claude-sonnet-4-6",
-            input_text="prompt ...",
-            output_text=answer,
-        )
-        run.record_answer(answer)
-        return answer
-```
-
-Run the Goldfinger-like example:
-
-```bash
-python3 examples/goldfinger_agent.py
-```
 
 Run tests with the Python standard library:
 

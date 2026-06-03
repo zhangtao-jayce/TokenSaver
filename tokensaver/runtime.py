@@ -59,6 +59,7 @@ class AgentRun:
         self._tokensaver = tokensaver
         self._started = time.time()
         self._run: dict[str, Any] = {
+            "schema_version": "0.2",
             "run_id": str(uuid.uuid4()),
             "app": tokensaver.app,
             "channel": tokensaver.channel,
@@ -68,6 +69,8 @@ class AgentRun:
             "context_items": [],
             "tool_calls": [],
             "model_calls": [],
+            "budget": {},
+            "quality_requirements": [],
             "quality_signals": {},
             "metadata": metadata,
             "answer": "",
@@ -89,6 +92,24 @@ class AgentRun:
             self._run["task_type"] = task_type
         if route:
             self._run["route"] = route
+
+    def set_budget(
+        self,
+        *,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        latency_ms: int | None = None,
+    ) -> None:
+        budget = self._run.setdefault("budget", {})
+        if input_tokens is not None:
+            budget["input_tokens"] = int(input_tokens)
+        if output_tokens is not None:
+            budget["output_tokens"] = int(output_tokens)
+        if latency_ms is not None:
+            budget["latency_ms"] = int(latency_ms)
+
+    def set_quality_requirements(self, required_fields: list[str]) -> None:
+        self._run["quality_requirements"] = list(required_fields)
 
     def add_context(self, name: str, content: str, *, kind: str = "text") -> None:
         self._run["context_items"].append(
@@ -143,6 +164,11 @@ class AgentRun:
         self._run["answer"] = answer
         self._run["answer_tokens"] = estimate_tokens(answer)
 
+    def record_final_answer(self, answer: str, *, channel: str | None = None) -> None:
+        if channel:
+            self._run["channel"] = channel
+        self.record_answer(answer)
+
     def add_quality_signal(self, name: str, value: Any = True) -> None:
         self._run["quality_signals"][name] = value
 
@@ -170,10 +196,13 @@ def record_agent_run(
     """Record an externally constructed run trace."""
 
     normalized = dict(run)
+    normalized.setdefault("schema_version", "0.2")
     normalized.setdefault("run_id", str(uuid.uuid4()))
     normalized.setdefault("context_items", [])
     normalized.setdefault("tool_calls", [])
     normalized.setdefault("model_calls", [])
+    normalized.setdefault("budget", {})
+    normalized.setdefault("quality_requirements", [])
     normalized.setdefault("quality_signals", {})
     normalized.setdefault("metadata", {})
     _normalize_context_items(normalized)

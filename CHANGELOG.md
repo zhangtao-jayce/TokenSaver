@@ -2,6 +2,90 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.2.0 - 2026-06-03
+
+### Release Goal
+
+Upgrade TokenSaver into a more actionable Agent workflow ROI diagnosis and repair-brief system.
+
+### Iteration Summary
+
+This release incorporates seed-user feedback from Goldfinger Agent usage. TokenSaver now diagnoses whether Agent costs, latency, context, tool outputs, route choices, and channel-specific answers are aligned with the task. It also generates more actionable repair briefs for coding agents.
+
+### Added
+
+- Trace schema version field:
+  - `schema_version: "0.2"`
+- Runtime APIs:
+  - `set_budget(input_tokens=..., output_tokens=..., latency_ms=...)`
+  - `set_quality_requirements([...])`
+  - `record_final_answer(...)`
+- Channel/task-aware budget diagnosis.
+- Latency budget diagnosis.
+- ROI dimension scores:
+  - `cost_efficiency`
+  - `latency_efficiency`
+  - `context_precision`
+  - `output_density`
+  - `task_fit`
+  - `quality_risk`
+- Top token consumer analysis across context, tools, model calls, and final answers.
+- Tool output governance findings:
+  - `dominant_tool_output`
+  - `raw_tool_payload`
+- Quality guardrail findings:
+  - `missing_required_quality_field`
+  - `quality_fields_not_verified`
+- Before/after run comparison.
+- Expanded CLI commands:
+  - `list`
+  - `show`
+  - `report`
+  - `brief`
+  - `compare`
+  - `top-tools`
+- Local panel sections for ROI dimensions and top token consumers.
+- Goldfinger-like tests for tool output governance and quality guardrails.
+
+### Changed
+
+- Repair briefs now include Objective, Evidence, Problems, Required Quality Fields, Requested Changes, and Verification sections.
+- Run summaries now include budget, ROI dimensions, and top token consumers.
+- Short-channel answer length diagnosis now uses final answer tokens when available.
+- Tool output recommendations now prefer summary/detail/full modes instead of raw large payloads.
+
+### Fixed
+
+- Preserved backward compatibility with `record_answer()`.
+- Existing `0.1.0` traces remain readable by the local store and CLI.
+
+### Verification
+
+Commands:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli record-run --file examples/run.json --store-dir /private/tmp/tokensaver-smoke
+python3 -m tokensaver.cli list --store-dir /private/tmp/tokensaver-smoke --limit 5
+python3 -m tokensaver.cli report latest --store-dir /private/tmp/tokensaver-smoke
+python3 -m tokensaver.cli top-tools --store-dir /private/tmp/tokensaver-smoke --last 5
+```
+
+Test result:
+
+```text
+Ran 11 tests
+OK
+```
+
+### Compatibility Notes
+
+- Python `>=3.10`.
+- No runtime third-party Python dependency is required by the core package.
+- New APIs are optional and additive.
+- Data is stored locally by default.
+
 ## 0.1.0 - 2026-06-02
 
 ### Release Goal

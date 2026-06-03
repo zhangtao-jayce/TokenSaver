@@ -59,6 +59,21 @@ class LocalStore:
         runs = self.load_runs(limit=1)
         return runs[0] if runs else None
 
+    def find_run(self, run_id: str) -> dict[str, Any] | None:
+        for run in self.load_runs(limit=0):
+            if str(run.get("run_id")) == run_id:
+                return run
+        return None
+
+    def compare_runs(self, before_id: str, after_id: str) -> dict[str, Any]:
+        before = self.find_run(before_id)
+        after = self.find_run(after_id)
+        if before is None:
+            raise ValueError(f"Run not found: {before_id}")
+        if after is None:
+            raise ValueError(f"Run not found: {after_id}")
+        return compare_runs(before, after)
+
     def read_latest_report(self) -> str:
         path = self.reports_dir / "latest.md"
         return path.read_text(encoding="utf-8") if path.exists() else ""
@@ -74,6 +89,14 @@ class LocalStore:
         findings = "".join(
             f"<li><strong>{_esc(str(item.get('code')))}</strong>: {_esc(str(item.get('message')))}</li>"
             for item in diagnosis.get("findings") or []
+        )
+        consumers = "".join(
+            f"<li><strong>{_esc(str(item.get('kind')))}</strong> {_esc(str(item.get('name')))}: {_esc(str(item.get('tokens')))} tokens</li>"
+            for item in diagnosis.get("top_token_consumers") or []
+        )
+        dimensions = "".join(
+            f"<li><strong>{_esc(str(name))}</strong>: {_esc(str(score))}</li>"
+            for name, score in (diagnosis.get("dimensions") or {}).items()
         )
         return f"""<!doctype html>
 <html lang="en">
@@ -93,6 +116,10 @@ class LocalStore:
   <p class="muted">Local-only summary generated from the latest Agent run.</p>
   <div class="score">{_esc(str(diagnosis.get("roi_score", 100)))}</div>
   <p>{_esc(str(latest.get("app", "")))} / {_esc(str(latest.get("channel", "")))} / {_esc(str(latest.get("task_type", "")))}</p>
+  <h2>ROI Dimensions</h2>
+  <ul>{dimensions or "<li>No dimension scores available.</li>"}</ul>
+  <h2>Top Token Consumers</h2>
+  <ul>{consumers or "<li>No token consumers recorded.</li>"}</ul>
   <h2>Latest Findings</h2>
   <ul>{findings or "<li>No low-ROI pattern detected.</li>"}</ul>
   <h2>Recent Runs</h2>
@@ -127,3 +154,40 @@ def _esc(text: str) -> str:
         .replace(">", "&gt;")
         .replace('"', "&quot;")
     )
+
+
+def compare_runs(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    before_codes = set((before.get("diagnosis") or {}).get("finding_codes") or [])
+    after_codes = set((after.get("diagnosis") or {}).get("finding_codes") or [])
+    fields = ("input_tokens", "output_tokens", "latency_ms", "answer_tokens")
+    deltas = {}
+    for field in fields:
+        before_value = int(before.get(field) or 0)
+        after_value = int(after.get(field) or 0)
+        deltas[field] = {
+            "before": before_value,
+            "after": after_value,
+            "delta": after_value - before_value,
+            "delta_pct": _pct_delta(before_value, after_value),
+        }
+    before_score = int((before.get("diagnosis") or {}).get("roi_score", 100))
+    after_score = int((after.get("diagnosis") or {}).get("roi_score", 100))
+    return {
+        "before_run_id": before.get("run_id"),
+        "after_run_id": after.get("run_id"),
+        "deltas": deltas,
+        "roi_score": {
+            "before": before_score,
+            "after": after_score,
+            "delta": after_score - before_score,
+        },
+        "resolved_findings": sorted(before_codes - after_codes),
+        "new_findings": sorted(after_codes - before_codes),
+        "unchanged_findings": sorted(before_codes & after_codes),
+    }
+
+
+def _pct_delta(before: int, after: int) -> float | None:
+    if before == 0:
+        return None
+    return round((after - before) / before * 100, 2)

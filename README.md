@@ -67,10 +67,17 @@ Current implemented features:
 
 - Agent Runtime Trace SDK
 - local JSONL trace storage
+- stable trace schema version field
 - local run summary markdown
 - local repair brief markdown
 - local HTML activity panel
 - rule-based ROI diagnosis
+- channel/task/route-aware budget diagnosis
+- ROI dimension scores for cost, latency, context precision, output density, task fit, and quality risk
+- top token consumer analysis across context, tools, model calls, and final answers
+- tool output governance findings for dominant outputs and raw/full payloads
+- required quality field guardrails
+- before/after run comparison
 - local token estimation
 - editable model pricing metadata
 - CLI tools
@@ -85,9 +92,13 @@ Current diagnosis rules can flag:
 - context item too large
 - history/log context waste for quick tasks
 - output too long for task/channel
+- input, output, or latency budget overage
 - repeated tool call without cache
 - large tool output
+- dominant tool output
+- raw or full-detail tool payload
 - strong model used for quick task
+- missing required quality fields
 - sensitive realtime/action task missing obvious source attribution
 - user correction signal
 
@@ -120,6 +131,8 @@ tokensaver = TokenSaver(app="my-agent", channel="slack")
 def handle_message(message: str) -> str:
     with tokensaver.run(user_message=message) as run:
         run.set_task(task_type="quick_quote_check", route="deep_research")
+        run.set_budget(input_tokens=8000, output_tokens=800, latency_ms=30000)
+        run.set_quality_requirements(["source", "as_of_time"])
         run.add_context("price", "market context ...", kind="market_data")
 
         prompt = f"Answer: {message}"
@@ -129,7 +142,7 @@ def handle_message(message: str) -> str:
             input_text=prompt,
             call=lambda: call_llm(prompt),
         )
-        run.record_answer(answer)
+        run.record_final_answer(answer)
         return answer
 ```
 
@@ -189,6 +202,22 @@ python3 -m tokensaver.cli latest --kind run
 python3 -m tokensaver.cli latest --kind summary
 python3 -m tokensaver.cli latest --kind brief
 python3 -m tokensaver.cli latest --kind panel
+```
+
+Inspect recorded runs:
+
+```bash
+python3 -m tokensaver.cli list --app goldfinger --channel feishu
+python3 -m tokensaver.cli show latest
+python3 -m tokensaver.cli report latest
+python3 -m tokensaver.cli brief latest
+python3 -m tokensaver.cli top-tools --last 50
+```
+
+Compare before/after optimization runs:
+
+```bash
+python3 -m tokensaver.cli compare --before RUN_ID --after RUN_ID
 ```
 
 ## MCP

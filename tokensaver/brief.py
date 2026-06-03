@@ -7,6 +7,7 @@ from typing import Any
 
 def generate_run_summary(run: dict[str, Any]) -> str:
     diagnosis = run.get("diagnosis") or {}
+    budget = diagnosis.get("budget") or run.get("budget") or {}
     lines = [
         f"# TokenSaver Run Summary",
         "",
@@ -20,6 +21,29 @@ def generate_run_summary(run: dict[str, Any]) -> str:
         f"- roi_score: {diagnosis.get('roi_score', 100)}",
         f"- status: {diagnosis.get('status', 'ok')}",
     ]
+    if budget:
+        lines.extend(
+            [
+                "",
+                "## Budget",
+                "",
+                f"- input_tokens: {budget.get('input_tokens', '')}",
+                f"- output_tokens: {budget.get('output_tokens', '')}",
+                f"- latency_ms: {budget.get('latency_ms', '')}",
+            ]
+        )
+    dimensions = diagnosis.get("dimensions") or {}
+    if dimensions:
+        lines.extend(["", "## ROI Dimensions"])
+        for name, score in dimensions.items():
+            lines.append(f"- {name}: {score}")
+    consumers = diagnosis.get("top_token_consumers") or []
+    if consumers:
+        lines.extend(["", "## Top Token Consumers"])
+        for item in consumers:
+            lines.append(
+                f"- {item.get('kind')}: {item.get('name')} ({item.get('tokens', 0)} tokens)"
+            )
     findings = diagnosis.get("findings") or []
     if findings:
         lines.extend(["", "## Findings"])
@@ -37,11 +61,14 @@ def generate_repair_brief(run: dict[str, Any]) -> str:
     channel = run.get("channel") or "runtime"
     task_type = run.get("task_type") or "unknown"
     route = run.get("route") or "unknown"
+    required_fields = list(run.get("quality_requirements") or [])
 
     lines = [
         f"# TokenSaver Repair Brief",
         "",
-        f"Please optimize {app}'s {channel} Agent workflow.",
+        "## Objective",
+        "",
+        f"Optimize {app}'s {channel} Agent workflow without losing decision-critical answer quality.",
         "",
         "## Observed Run",
         "",
@@ -53,10 +80,29 @@ def generate_repair_brief(run: dict[str, Any]) -> str:
         f"- roi_score: {diagnosis.get('roi_score', 100)}",
     ]
 
+    consumers = diagnosis.get("top_token_consumers") or []
+    if consumers:
+        lines.extend(["", "## Evidence"])
+        for item in consumers[:5]:
+            lines.append(
+                f"- {item.get('kind')}: {item.get('name')} used {item.get('tokens', 0)} tokens"
+            )
+
     if findings:
         lines.extend(["", "## Problems"])
         for finding in findings:
-            lines.append(f"- {finding.get('code')}: {finding.get('message')}")
+            owner = finding.get("owner_area") or "workflow"
+            lines.append(f"- {finding.get('code')} ({owner}): {finding.get('message')}")
+            evidence = finding.get("evidence") or {}
+            if evidence:
+                lines.append(f"  Evidence: {_inline_dict(evidence)}")
+            if finding.get("impact"):
+                lines.append(f"  Impact: {finding.get('impact')}")
+
+        if required_fields:
+            lines.extend(["", "## Required Quality Fields"])
+            for field in required_fields:
+                lines.append(f"- {field}")
 
         lines.extend(["", "## Requested Changes"])
         for index, recommendation in enumerate(_dedupe_recommendations(findings), start=1):
@@ -83,7 +129,8 @@ def generate_repair_brief(run: dict[str, Any]) -> str:
             "1. Run the same or equivalent Agent request again.",
             "2. Confirm TokenSaver records a new trace.",
             "3. Compare input tokens, output tokens, latency, and finding codes against this run.",
-            "4. Add or update tests for route selection and token budgets when code changes are made.",
+            "4. Confirm required quality fields are still present or explicitly verified.",
+            "5. Add or update tests for route selection, tool payload modes, and token budgets when code changes are made.",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -99,3 +146,9 @@ def _dedupe_recommendations(findings: list[dict[str, Any]]) -> list[str]:
             recommendations.append(recommendation)
     return recommendations
 
+
+def _inline_dict(value: dict[str, Any]) -> str:
+    parts = []
+    for key, item in value.items():
+        parts.append(f"{key}={item}")
+    return ", ".join(parts)

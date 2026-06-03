@@ -80,6 +80,7 @@ Current implemented features:
 - before/after run comparison
 - local version and update checks
 - update notices in generated reports, repair briefs, and the local panel
+- install doctor, verify-install, and environment-specific upgrade commands
 - local token estimation
 - editable model pricing metadata
 - CLI tools
@@ -108,10 +109,20 @@ TokenSaver does **not** upload data by default and does **not** call an LLM by d
 
 ## Install
 
-In an Agent app:
+Recommended in an Agent app:
 
 ```bash
-pip install git+https://github.com/zhangtao-jayce/TokenSaver.git
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade \
+  git+https://github.com/zhangtao-jayce/TokenSaver.git
+```
+
+For macOS Homebrew Python temporary seed-user verification:
+
+```bash
+python3 -m pip install --user --break-system-packages --upgrade --force-reinstall \
+  git+https://github.com/zhangtao-jayce/TokenSaver.git
 ```
 
 For local development:
@@ -189,6 +200,7 @@ Check installed version and updates:
 
 ```bash
 python3 -m tokensaver.cli version
+python3 -m tokensaver.cli version --verbose
 python3 -m tokensaver.cli check-update
 python3 -m tokensaver.cli check-update --json
 ```
@@ -196,13 +208,21 @@ python3 -m tokensaver.cli check-update --json
 When a newer version is available, TokenSaver prints a copyable upgrade command:
 
 ```bash
-pip install --upgrade --force-reinstall git+https://github.com/zhangtao-jayce/TokenSaver.git@COMMIT
+python3 -m tokensaver.cli upgrade-command --commit COMMIT
+python3 -m tokensaver.cli verify-install --commit COMMIT --check-project-files
+python3 -m tokensaver.cli doctor
 ```
 
 TokenSaver also adds an update notice to generated local artifacts when a newer version is detected. To disable automatic update checks during Agent runs:
 
 ```bash
 export TOKENSAVER_CHECK_UPDATE_ON_RUN=0
+```
+
+If the `tokensaver` console script is not on `PATH`, use the stable module form:
+
+```bash
+python3 -m tokensaver.cli version
 ```
 
 Plan context/model strategy for a task:
@@ -258,8 +278,13 @@ Available MCP tools:
 - `tokensaver.get_latest_runs`
 - `tokensaver.diagnose_roi`
 - `tokensaver.generate_repair_brief`
+- `tokensaver.get_version`
+- `tokensaver.check_update`
+- `tokensaver.doctor`
+- `tokensaver.verify_install`
+- `tokensaver.upgrade_command`
 
-Codex / Claude Code can use these tools to inspect a task, record Agent runs, read latest traces, diagnose ROI, and generate repair briefs.
+Codex / Claude Code can use these tools to inspect a task, record Agent runs, read latest traces, diagnose ROI, generate repair briefs, and verify the TokenSaver installation environment.
 
 ## Public Docs
 

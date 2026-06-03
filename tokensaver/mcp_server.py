@@ -9,10 +9,12 @@ from typing import Any
 from . import __version__
 from .brief import generate_repair_brief
 from .diagnosis import diagnose_run
+from .install import build_upgrade_command, doctor, verbose_version_info, verify_install
 from .planner import plan_task
 from .runtime import record_agent_run
 from .store import LocalStore
 from .tokenizer import estimate_tokens
+from .update import check_for_update
 
 
 TOOLS = [
@@ -93,6 +95,64 @@ TOOLS = [
             "properties": {
                 "run": {"type": "object"},
                 "store_dir": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "tokensaver.get_version",
+        "description": "Return TokenSaver version, Python path, package path, commit, and CLI path metadata.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_dir": {"type": "string"},
+                "verbose": {"type": "boolean"},
+            },
+        },
+    },
+    {
+        "name": "tokensaver.check_update",
+        "description": "Check whether a newer TokenSaver version is available from public GitHub metadata.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "timeout": {"type": "number"},
+                "offline": {"type": "boolean"},
+            },
+        },
+    },
+    {
+        "name": "tokensaver.doctor",
+        "description": "Diagnose TokenSaver installation, Python environment, PATH, remote metadata, and project pins.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_dir": {"type": "string"},
+                "timeout": {"type": "number"},
+                "offline": {"type": "boolean"},
+            },
+        },
+    },
+    {
+        "name": "tokensaver.verify_install",
+        "description": "Verify installed TokenSaver version, commit, and optional project dependency pins.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_dir": {"type": "string"},
+                "commit": {"type": "string"},
+                "version": {"type": "string"},
+                "check_project_files": {"type": "boolean"},
+            },
+        },
+    },
+    {
+        "name": "tokensaver.upgrade_command",
+        "description": "Generate a copyable TokenSaver upgrade command for the current Python environment.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "commit": {"type": "string"},
+                "pipx": {"type": "boolean"},
             },
         },
     },
@@ -180,6 +240,60 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         diagnosed = dict(run)
         diagnosed["diagnosis"] = diagnose_run(diagnosed)
         return _tool_text({"brief": generate_repair_brief(diagnosed)})
+
+    if name == "tokensaver.get_version":
+        result = verbose_version_info(
+            project_dir=arguments.get("project_dir") or "."
+        )
+        if not bool(arguments.get("verbose", True)):
+            result = {
+                "name": result["name"],
+                "version": result["version"],
+                "local_commit": result["local_commit"],
+                "python_executable": result["python_executable"],
+            }
+        return _tool_text(result)
+
+    if name == "tokensaver.check_update":
+        if bool(arguments.get("offline")):
+            result = {
+                "status": "cannot_check_remote",
+                "reason": "offline_mode",
+                "local_installation_ok": True,
+                "version": verbose_version_info(),
+            }
+        else:
+            result = check_for_update(timeout=float(arguments.get("timeout", 2.0))).to_dict()
+        return _tool_text(result)
+
+    if name == "tokensaver.doctor":
+        return _tool_text(
+            doctor(
+                project_dir=arguments.get("project_dir") or ".",
+                timeout=float(arguments.get("timeout", 1.0)),
+                check_remote=not bool(arguments.get("offline")),
+            )
+        )
+
+    if name == "tokensaver.verify_install":
+        return _tool_text(
+            verify_install(
+                expected_commit=arguments.get("commit"),
+                expected_version=arguments.get("version"),
+                project_dir=arguments.get("project_dir") or ".",
+                check_project_files=bool(arguments.get("check_project_files")),
+            )
+        )
+
+    if name == "tokensaver.upgrade_command":
+        return _tool_text(
+            {
+                "command": build_upgrade_command(
+                    commit=arguments.get("commit"),
+                    prefer_pipx=bool(arguments.get("pipx")),
+                )
+            }
+        )
 
     return {
         "isError": True,

@@ -1,6 +1,6 @@
 # Version Management
 
-Current version: `0.3.0`
+Current version: `0.4.0`
 
 Release date: 2026-06-03
 
@@ -33,6 +33,48 @@ Each release should record:
 - known limitations
 
 ## Current Release
+
+### 0.4.0
+
+Release date: 2026-06-03
+
+Release goal:
+
+Productize TokenSaver installation, upgrade, and verification for real Agent application environments.
+
+Iteration summary:
+
+TokenSaver `0.4.0` adds environment-aware installation diagnostics, verbose version metadata, dependency pin scanning, install verification, upgrade command generation, a safe self-update entrypoint, and MCP tools for Agent-accessible install diagnostics.
+
+Verification:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli version --verbose
+python3 -m tokensaver.cli doctor --offline
+python3 -m tokensaver.cli verify-install --version 0.4.0
+python3 -m tokensaver.cli upgrade-command --commit COMMIT
+```
+
+Expected result:
+
+```text
+Ran 21 tests
+OK
+```
+
+Compatibility notes:
+
+- Existing traces remain readable.
+- New installation commands are additive.
+- `self-update` only prints the command unless `--execute` is explicitly passed.
+- `doctor --fix-requirements` only edits dependency pins when explicitly requested.
+
+Known limitations:
+
+- Local commit detection is best-effort and depends on Git checkout or PEP 610 install metadata.
+- `self-update --execute` still depends on the current Python environment permissions.
 
 ### 0.3.0
 

@@ -9,6 +9,14 @@ from pathlib import Path
 
 from .brief import generate_repair_brief
 from .diagnosis import diagnose_run
+from .install import (
+    build_upgrade_command,
+    doctor,
+    fix_project_pins,
+    run_self_update,
+    verbose_version_info,
+    verify_install,
+)
 from .planner import plan_task
 from .runtime import record_agent_run
 from .store import LocalStore
@@ -26,10 +34,38 @@ def main(argv: list[str] | None = None) -> int:
 
     version_parser = subparsers.add_parser("version", help="Show local TokenSaver version.")
     version_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    version_parser.add_argument("--verbose", action="store_true", help="Show Python, package, commit, and CLI path details.")
+    version_parser.add_argument("--project-dir", default=".")
 
     update_parser = subparsers.add_parser("check-update", help="Check whether TokenSaver has a newer version.")
     update_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     update_parser.add_argument("--timeout", type=float, default=3.0)
+    update_parser.add_argument("--offline", action="store_true", help="Do not query remote metadata.")
+
+    doctor_parser = subparsers.add_parser("doctor", help="Diagnose TokenSaver installation and project pins.")
+    doctor_parser.add_argument("--json", action="store_true")
+    doctor_parser.add_argument("--project-dir", default=".")
+    doctor_parser.add_argument("--timeout", type=float, default=1.0)
+    doctor_parser.add_argument("--offline", action="store_true")
+    doctor_parser.add_argument("--fix-requirements", action="store_true", help="Update TokenSaver git pins in requirements.txt/pyproject.toml to the local commit.")
+
+    verify_parser = subparsers.add_parser("verify-install", help="Verify installed TokenSaver version and commit.")
+    verify_parser.add_argument("--json", action="store_true")
+    verify_parser.add_argument("--commit")
+    verify_parser.add_argument("--version")
+    verify_parser.add_argument("--project-dir", default=".")
+    verify_parser.add_argument("--check-project-files", action="store_true")
+    verify_parser.add_argument("--check-mcp", action="store_true")
+
+    upgrade_command_parser = subparsers.add_parser("upgrade-command", help="Generate an upgrade command for this Python environment.")
+    upgrade_command_parser.add_argument("--json", action="store_true")
+    upgrade_command_parser.add_argument("--commit")
+    upgrade_command_parser.add_argument("--pipx", action="store_true", help="Prefer pipx command when pipx is available.")
+
+    self_update_parser = subparsers.add_parser("self-update", help="Print or execute a TokenSaver self-update command.")
+    self_update_parser.add_argument("--json", action="store_true")
+    self_update_parser.add_argument("--commit")
+    self_update_parser.add_argument("--execute", action="store_true", help="Actually run pip to update TokenSaver.")
 
     plan_parser = subparsers.add_parser("plan", help="Plan a task.")
     plan_parser.add_argument("message", nargs="?", help="User task message.")
@@ -101,22 +137,110 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "version":
-        info = get_version_info()
+        info = verbose_version_info(project_dir=args.project_dir) if args.verbose else get_version_info()
         if args.json:
             print(json.dumps(info, ensure_ascii=False, indent=2))
+        elif args.verbose:
+            _print_verbose_version(info)
         else:
             print(f"TokenSaver {info['version']}")
             print(info["repository"])
         return 0
 
     if args.command == "check-update":
-        info = check_for_update(timeout=args.timeout)
-        data = info.to_dict()
+        if args.offline:
+            local = verbose_version_info()
+            data = {
+                "local_version": local["version"],
+                "local_commit": local["local_commit"],
+                "latest_version": None,
+                "latest_commit": None,
+                "status": "cannot_check_remote",
+                "reason": "offline_mode",
+                "local_installation_ok": True,
+                "upgrade_command": build_upgrade_command(),
+                "compatibility": [
+                    "Existing local traces remain readable.",
+                    "Offline mode skips remote metadata checks.",
+                ],
+                "error": "",
+            }
+        else:
+            info = check_for_update(timeout=args.timeout)
+            data = info.to_dict()
         if args.json:
             print(json.dumps(data, ensure_ascii=False, indent=2))
         else:
             _print_update_info(data)
         return 0
+
+    if args.command == "doctor":
+        result = doctor(
+            project_dir=args.project_dir,
+            timeout=args.timeout,
+            check_remote=not args.offline,
+        )
+        if args.fix_requirements:
+            commit = ((result.get("version") or {}).get("local_commit") if isinstance(result.get("version"), dict) else None)
+            if not commit:
+                raise SystemExit("Cannot fix requirements because local TokenSaver commit is unknown.")
+            result["fix_requirements"] = fix_project_pins(
+                commit=str(commit),
+                project_dir=args.project_dir,
+            )
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            _print_doctor(result)
+        return 0 if result.get("ok") else 1
+
+    if args.command == "verify-install":
+        result = verify_install(
+            expected_commit=args.commit,
+            expected_version=args.version,
+            project_dir=args.project_dir,
+            check_project_files=args.check_project_files,
+        )
+        if args.check_mcp:
+            result["tokensaver_mcp_on_path"] = verbose_version_info(
+                project_dir=args.project_dir
+            )["tokensaver_mcp_on_path"]
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            _print_verify(result)
+        return 0 if result.get("ok") else 1
+
+    if args.command == "upgrade-command":
+        command = build_upgrade_command(commit=args.commit, prefer_pipx=args.pipx)
+        result = {"command": command, "commit": args.commit}
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(command)
+        return 0
+
+    if args.command == "self-update":
+        command = build_upgrade_command(commit=args.commit)
+        if not args.execute:
+            result = {
+                "executed": False,
+                "command": command,
+                "next_step": "Re-run with --execute to perform the update.",
+            }
+        else:
+            result = run_self_update(commit=args.commit)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        elif args.execute:
+            print(f"Command: {result['command']}")
+            print(f"Status: {'ok' if result['ok'] else 'failed'}")
+            if result.get("stderr"):
+                print(result["stderr"])
+        else:
+            print(command)
+            print("Re-run with --execute to perform the update.")
+        return 0 if result.get("ok", True) else 1
 
     if args.command == "plan":
         message = _read_arg_text(args.message, args.message_file)
@@ -305,12 +429,20 @@ def _top_tools(runs: list[dict[str, object]]) -> list[dict[str, object]]:
 
 def _print_update_info(data: dict[str, object]) -> None:
     print(f"TokenSaver local: {data.get('local_version')}")
+    print(f"Local commit: {data.get('local_commit') or 'unknown'}")
     print(f"TokenSaver latest: {data.get('latest_version') or 'unknown'}")
     print(f"Status: {data.get('status')}")
+    if data.get("reason"):
+        print(f"Reason: {data.get('reason')}")
     if data.get("latest_commit"):
         print(f"Latest commit: {data.get('latest_commit')}")
     if data.get("error"):
         print(f"Error: {data.get('error')}")
+    if data.get("status") == "cannot_check_remote":
+        print("")
+        print("Local TokenSaver is installed and runnable.")
+        print("Remote update metadata could not be fetched.")
+        print("Retry: python3 -m tokensaver.cli check-update")
     print("")
     print("Upgrade:")
     print(str(data.get("upgrade_command") or ""))
@@ -320,6 +452,71 @@ def _print_update_info(data: dict[str, object]) -> None:
         print("Compatibility:")
         for note in compatibility:
             print(f"- {note}")
+
+
+def _print_verbose_version(info: dict[str, object]) -> None:
+    print(f"TokenSaver {info.get('version')}")
+    print(f"Local commit: {info.get('local_commit') or 'unknown'}")
+    print(f"Package path: {info.get('package_path')}")
+    print(f"Python: {info.get('python_executable')}")
+    print(f"Python version: {info.get('python_version')}")
+    print(f"Install mode: {info.get('install_mode')}")
+    print(f"In venv: {info.get('in_venv')}")
+    print(f"Externally managed Python: {info.get('externally_managed_python')}")
+    print(f"CLI script path: {info.get('cli_script_path')}")
+    print(f"CLI script on PATH: {info.get('cli_script_on_path')}")
+    print(f"tokensaver-mcp on PATH: {info.get('tokensaver_mcp_on_path')}")
+
+
+def _print_doctor(result: dict[str, object]) -> None:
+    version = result.get("version") or {}
+    if isinstance(version, dict):
+        print(f"TokenSaver {version.get('version')} ({version.get('local_commit') or 'unknown commit'})")
+        print(f"Python: {version.get('python_executable')}")
+        print(f"Package: {version.get('package_path')}")
+    print(f"Status: {'ok' if result.get('ok') else 'needs_attention'}")
+    findings = result.get("findings") or []
+    if findings:
+        print("")
+        print("Findings:")
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            print(f"- [{finding.get('severity')}] {finding.get('code')}: {finding.get('message')}")
+            print(f"  Fix: {finding.get('recommendation')}")
+    if result.get("fix_requirements"):
+        fix = result["fix_requirements"]
+        if isinstance(fix, dict):
+            print("")
+            print("Fixed dependency files:")
+            for path in fix.get("changed") or []:
+                print(f"- {path}")
+    print("")
+    print("Upgrade command:")
+    print(result.get("upgrade_command") or "")
+
+
+def _print_verify(result: dict[str, object]) -> None:
+    print("Install verified." if result.get("ok") else "Install verification failed.")
+    print("")
+    print("TokenSaver:")
+    print(f"  version: {result.get('version')}")
+    print(f"  commit: {result.get('commit') or 'unknown'}")
+    if result.get("expected_version"):
+        print(f"  expected_version: {result.get('expected_version')}")
+    if result.get("expected_commit"):
+        print(f"  expected_commit: {result.get('expected_commit')}")
+    print("")
+    print("Python:")
+    print(f"  executable: {result.get('python_executable')}")
+    print(f"  install_mode: {result.get('install_mode')}")
+    findings = result.get("findings") or []
+    if findings:
+        print("")
+        print("Findings:")
+        for finding in findings:
+            if isinstance(finding, dict):
+                print(f"- {finding.get('code')}: {finding.get('message')}")
 
 
 if __name__ == "__main__":

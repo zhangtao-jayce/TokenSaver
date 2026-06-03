@@ -11,6 +11,8 @@ class McpServerTests(unittest.TestCase):
         names = [tool["name"] for tool in response["result"]["tools"]]
         self.assertIn("tokensaver.plan_task", names)
         self.assertIn("tokensaver.estimate_tokens", names)
+        self.assertIn("tokensaver.doctor", names)
+        self.assertIn("tokensaver.verify_install", names)
 
     def test_plan_tool_call(self):
         response = handle_request(
@@ -88,6 +90,33 @@ class McpServerTests(unittest.TestCase):
                 }
             )
             self.assertIn("TokenSaver Repair Brief", brief_response["result"]["content"][0]["text"])
+
+    def test_install_tools(self):
+        version_response = handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "tools/call",
+                "params": {
+                    "name": "tokensaver.get_version",
+                    "arguments": {"verbose": False},
+                },
+            }
+        )
+        self.assertIn("python_executable", version_response["result"]["content"][0]["text"])
+
+        command_response = handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "tools/call",
+                "params": {
+                    "name": "tokensaver.upgrade_command",
+                    "arguments": {"commit": "abc1234"},
+                },
+            }
+        )
+        self.assertIn("@abc1234", command_response["result"]["content"][0]["text"])
 
 
 if __name__ == "__main__":

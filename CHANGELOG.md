@@ -2,6 +2,90 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.4.0 - 2026-06-03
+
+### Release Goal
+
+Productize TokenSaver installation, upgrade, and verification for seed users running real Agent applications.
+
+### Iteration Summary
+
+This release turns install and upgrade troubleshooting into first-class TokenSaver diagnostics. TokenSaver now explains which Python environment is active, where the package is installed, whether CLI scripts are on PATH, whether Homebrew/PEP 668 may affect installation, whether project dependency files pin an older commit, and which upgrade command fits the current environment.
+
+### Added
+
+- Verbose version inspection:
+  - `tokensaver version --verbose`
+  - `python3 -m tokensaver.cli version --verbose --json`
+- Structured install doctor:
+  - `tokensaver doctor`
+  - `tokensaver doctor --offline`
+  - `tokensaver doctor --fix-requirements`
+- Install verification:
+  - `tokensaver verify-install --version VERSION`
+  - `tokensaver verify-install --commit COMMIT`
+  - `tokensaver verify-install --check-project-files`
+- Environment-aware upgrade command generation:
+  - `tokensaver upgrade-command --commit COMMIT`
+- Safe self-update entrypoint:
+  - `tokensaver self-update --commit COMMIT`
+  - `tokensaver self-update --commit COMMIT --execute`
+- Project dependency pin scanning for:
+  - `requirements.txt`
+  - `pyproject.toml`
+  - `poetry.lock`
+  - `uv.lock`
+  - `Pipfile.lock`
+- Explicit dependency pin fixer for GitHub TokenSaver URLs in:
+  - `requirements.txt`
+  - `pyproject.toml`
+- Local commit detection from Git checkout or PEP 610 `direct_url.json`.
+- MCP tools:
+  - `tokensaver.get_version`
+  - `tokensaver.check_update`
+  - `tokensaver.doctor`
+  - `tokensaver.verify_install`
+  - `tokensaver.upgrade_command`
+
+### Changed
+
+- Install and upgrade docs now prefer `python3 -m pip` and project virtual environments over bare `pip`.
+- `check-update` now reports `cannot_check_remote`, `reason`, `local_commit`, and `local_installation_ok`.
+- Upgrade commands now use the active Python interpreter.
+- Integration guide now documents install diagnostics and MCP install tools.
+
+### Fixed
+
+- Network failures during update checks are classified instead of shown only as raw Python exceptions.
+- PATH and externally managed Python conditions are diagnosed with actionable next steps.
+
+### Verification
+
+Commands:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli version --verbose --json
+python3 -m tokensaver.cli doctor --offline --json
+python3 -m tokensaver.cli verify-install --version 0.4.0 --json
+python3 -m tokensaver.cli upgrade-command --commit abc1234
+```
+
+Test result:
+
+```text
+Ran 21 tests
+OK
+```
+
+### Compatibility Notes
+
+- Python `>=3.10`.
+- No runtime third-party Python dependency is required by the core package.
+- Existing traces remain readable.
+- `self-update` does not modify the environment unless `--execute` is passed.
+
 ## 0.3.0 - 2026-06-03
 
 ### Release Goal

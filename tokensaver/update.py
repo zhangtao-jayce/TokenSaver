@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from . import __version__
@@ -27,6 +30,9 @@ class UpdateInfo:
     status: str
     upgrade_command: str
     compatibility: list[str]
+    local_commit: str | None = None
+    reason: str = ""
+    local_installation_ok: bool = True
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,11 +60,13 @@ def check_for_update(
     """
 
     error = ""
+    reason = ""
     if latest_version is None:
         try:
             latest_version = fetch_latest_version(timeout=timeout)
         except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
             error = str(exc)
+            reason = _classify_error(exc)
     if latest_commit is None and latest_version is not None:
         try:
             latest_commit = fetch_latest_commit(timeout=timeout)
@@ -70,13 +78,20 @@ def check_for_update(
             local_version=__version__,
             latest_version=None,
             latest_commit=None,
-            status="unknown",
+            status="cannot_check_remote",
             upgrade_command=_upgrade_command(None),
             compatibility=_compatibility_notes(),
+            local_commit=_local_commit(),
+            reason=reason or "remote_metadata_unavailable",
             error=error or "Unable to fetch latest version metadata.",
         )
 
-    status = "update_available" if _version_tuple(latest_version) > _version_tuple(__version__) else "up_to_date"
+    if _version_tuple(latest_version) > _version_tuple(__version__):
+        status = "update_available"
+    elif _version_tuple(latest_version) < _version_tuple(__version__):
+        status = "local_newer_than_remote"
+    else:
+        status = "up_to_date"
     return UpdateInfo(
         local_version=__version__,
         latest_version=latest_version,
@@ -84,6 +99,7 @@ def check_for_update(
         status=status,
         upgrade_command=_upgrade_command(latest_commit),
         compatibility=_compatibility_notes(),
+        local_commit=_local_commit(),
     )
 
 
@@ -144,7 +160,7 @@ def _read_url(url: str, *, timeout: float) -> str:
 
 def _upgrade_command(commit: str | None) -> str:
     suffix = f"@{commit}" if commit else ""
-    return f"pip install --upgrade --force-reinstall {INSTALL_URL}{suffix}"
+    return f"{sys.executable} -m pip install --upgrade --force-reinstall {INSTALL_URL}{suffix}"
 
 
 def _compatibility_notes() -> list[str]:
@@ -163,3 +179,32 @@ def _version_tuple(version: str) -> tuple[int, int, int]:
     while len(parts) < 3:
         parts.append(0)
     return tuple(parts)  # type: ignore[return-value]
+
+
+def _classify_error(exc: BaseException) -> str:
+    text = str(exc).lower()
+    if isinstance(exc, urllib.error.URLError) or "nodename" in text or "timed out" in text:
+        return "network_unavailable"
+    if isinstance(exc, ValueError):
+        return "metadata_parse_error"
+    return "remote_metadata_unavailable"
+
+
+def _local_commit() -> str | None:
+    package_dir = Path(__file__).resolve().parent
+    for cwd in (package_dir, package_dir.parent):
+        try:
+            process = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            continue
+        value = process.stdout.strip()
+        if process.returncode == 0 and value:
+            return value
+    return None

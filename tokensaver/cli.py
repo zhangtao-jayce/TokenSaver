@@ -13,6 +13,7 @@ from .planner import plan_task
 from .runtime import record_agent_run
 from .store import LocalStore
 from .tokenizer import estimate_tokens
+from .update import check_for_update, get_version_info
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -22,6 +23,13 @@ def main(argv: list[str] | None = None) -> int:
     estimate_parser = subparsers.add_parser("estimate", help="Estimate tokens.")
     estimate_parser.add_argument("text", nargs="?", help="Text to estimate.")
     estimate_parser.add_argument("--file", help="Read text from file.")
+
+    version_parser = subparsers.add_parser("version", help="Show local TokenSaver version.")
+    version_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+
+    update_parser = subparsers.add_parser("check-update", help="Check whether TokenSaver has a newer version.")
+    update_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    update_parser.add_argument("--timeout", type=float, default=3.0)
 
     plan_parser = subparsers.add_parser("plan", help="Plan a task.")
     plan_parser.add_argument("message", nargs="?", help="User task message.")
@@ -90,6 +98,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "estimate":
         text = _read_arg_text(args.text, args.file)
         print(json.dumps({"tokens_estimate": estimate_tokens(text)}, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "version":
+        info = get_version_info()
+        if args.json:
+            print(json.dumps(info, ensure_ascii=False, indent=2))
+        else:
+            print(f"TokenSaver {info['version']}")
+            print(info["repository"])
+        return 0
+
+    if args.command == "check-update":
+        info = check_for_update(timeout=args.timeout)
+        data = info.to_dict()
+        if args.json:
+            print(json.dumps(data, ensure_ascii=False, indent=2))
+        else:
+            _print_update_info(data)
         return 0
 
     if args.command == "plan":
@@ -275,6 +301,25 @@ def _top_tools(runs: list[dict[str, object]]) -> list[dict[str, object]]:
             item["input_tokens"] = int(item["input_tokens"]) + int(call.get("input_tokens") or 0)
             item["output_tokens"] = int(item["output_tokens"]) + int(call.get("output_tokens") or 0)
     return sorted(totals.values(), key=lambda item: int(item["output_tokens"]), reverse=True)
+
+
+def _print_update_info(data: dict[str, object]) -> None:
+    print(f"TokenSaver local: {data.get('local_version')}")
+    print(f"TokenSaver latest: {data.get('latest_version') or 'unknown'}")
+    print(f"Status: {data.get('status')}")
+    if data.get("latest_commit"):
+        print(f"Latest commit: {data.get('latest_commit')}")
+    if data.get("error"):
+        print(f"Error: {data.get('error')}")
+    print("")
+    print("Upgrade:")
+    print(str(data.get("upgrade_command") or ""))
+    compatibility = data.get("compatibility") or []
+    if compatibility:
+        print("")
+        print("Compatibility:")
+        for note in compatibility:
+            print(f"- {note}")
 
 
 if __name__ == "__main__":

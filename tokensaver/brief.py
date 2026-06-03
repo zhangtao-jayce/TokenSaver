@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from .update import format_update_notice
 
-def generate_run_summary(run: dict[str, Any]) -> str:
+
+def generate_run_summary(
+    run: dict[str, Any],
+    *,
+    update_info: dict[str, Any] | None = None,
+) -> str:
     diagnosis = run.get("diagnosis") or {}
     budget = diagnosis.get("budget") or run.get("budget") or {}
     lines = [
@@ -51,10 +57,17 @@ def generate_run_summary(run: dict[str, Any]) -> str:
             lines.append(
                 f"- [{finding.get('severity')}] {finding.get('code')}: {finding.get('message')}"
             )
+    notice = format_update_notice(update_info)
+    if notice:
+        lines.extend(["", notice])
     return "\n".join(lines) + "\n"
 
 
-def generate_repair_brief(run: dict[str, Any]) -> str:
+def generate_repair_brief(
+    run: dict[str, Any],
+    *,
+    update_info: dict[str, Any] | None = None,
+) -> str:
     diagnosis = run.get("diagnosis") or {}
     findings = diagnosis.get("findings") or []
     app = run.get("app") or "this Agent app"
@@ -133,6 +146,9 @@ def generate_repair_brief(run: dict[str, Any]) -> str:
             "5. Add or update tests for route selection, tool payload modes, and token budgets when code changes are made.",
         ]
     )
+    notice = format_update_notice(update_info)
+    if notice:
+        lines.extend(["", notice])
     return "\n".join(lines) + "\n"
 
 

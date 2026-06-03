@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from .brief import generate_repair_brief, generate_run_summary
+from .update import check_for_update, format_update_notice
 
 
 class LocalStore:
@@ -28,14 +30,18 @@ class LocalStore:
         with self.runs_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(run, ensure_ascii=False, sort_keys=True) + "\n")
 
-        summary = generate_run_summary(run)
-        brief = generate_repair_brief(run)
+        update_info = _check_update_for_artifacts()
+        if update_info:
+            run["tokensaver_update"] = update_info
+
+        summary = generate_run_summary(run, update_info=update_info)
+        brief = generate_repair_brief(run, update_info=update_info)
         report_path = self.reports_dir / "latest.md"
         brief_path = self.briefs_dir / "latest.md"
         report_path.write_text(summary, encoding="utf-8")
         brief_path.write_text(brief, encoding="utf-8")
         panel_path = self.panel_dir / "index.html"
-        panel_path.write_text(self._render_panel(run), encoding="utf-8")
+        panel_path.write_text(self._render_panel(run, update_info=update_info), encoding="utf-8")
         return {
             "runs_path": str(self.runs_path),
             "report_path": str(report_path),
@@ -82,7 +88,12 @@ class LocalStore:
         path = self.briefs_dir / "latest.md"
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
-    def _render_panel(self, latest: dict[str, Any]) -> str:
+    def _render_panel(
+        self,
+        latest: dict[str, Any],
+        *,
+        update_info: dict[str, Any] | None = None,
+    ) -> str:
         runs = self.load_runs(limit=20)
         rows = "\n".join(_run_row(run) for run in reversed(runs))
         diagnosis = latest.get("diagnosis") or {}
@@ -98,6 +109,7 @@ class LocalStore:
             f"<li><strong>{_esc(str(name))}</strong>: {_esc(str(score))}</li>"
             for name, score in (diagnosis.get("dimensions") or {}).items()
         )
+        update_notice = _render_update_notice(update_info)
         return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -114,6 +126,7 @@ class LocalStore:
 <body>
   <h1>TokenSaver Activity Panel</h1>
   <p class="muted">Local-only summary generated from the latest Agent run.</p>
+  {update_notice}
   <div class="score">{_esc(str(diagnosis.get("roi_score", 100)))}</div>
   <p>{_esc(str(latest.get("app", "")))} / {_esc(str(latest.get("channel", "")))} / {_esc(str(latest.get("task_type", "")))}</p>
   <h2>ROI Dimensions</h2>
@@ -153,6 +166,29 @@ def _esc(text: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace('"', "&quot;")
+    )
+
+
+def _check_update_for_artifacts() -> dict[str, Any] | None:
+    if os.environ.get("TOKENSAVER_CHECK_UPDATE_ON_RUN", "1") == "0":
+        return None
+    info = check_for_update(timeout=0.35)
+    if info.status != "update_available":
+        return None
+    return info.to_dict()
+
+
+def _render_update_notice(update_info: dict[str, Any] | None) -> str:
+    notice = format_update_notice(update_info)
+    if not notice:
+        return ""
+    latest = update_info.get("latest_version", "latest") if update_info else "latest"
+    command = update_info.get("upgrade_command", "") if update_info else ""
+    return (
+        '<section style="border:1px solid #f59e0b; background:#fffbeb; padding:12px; margin:16px 0;">'
+        f"<strong>TokenSaver update available: {_esc(str(latest))}</strong>"
+        f"<pre>{_esc(str(command))}</pre>"
+        "</section>"
     )
 
 

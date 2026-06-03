@@ -2,6 +2,72 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.3.0 - 2026-06-03
+
+### Release Goal
+
+Help seed users discover and apply TokenSaver updates from inside already-integrated Agent applications.
+
+### Iteration Summary
+
+This release adds update awareness to TokenSaver. Users can check the installed version, compare it with GitHub `main`, get a copyable upgrade command, and see update notices in generated local artifacts when a newer version is available.
+
+### Added
+
+- Version inspection CLI:
+  - `tokensaver version`
+  - `python3 -m tokensaver.cli version`
+- Update check CLI:
+  - `tokensaver check-update`
+  - `python3 -m tokensaver.cli check-update`
+- Machine-readable update output:
+  - `tokensaver version --json`
+  - `tokensaver check-update --json`
+- Public GitHub version metadata checks using `pyproject.toml` on `main`.
+- Best-effort latest commit detection for pinned install commands.
+- Copyable upgrade command generation.
+- Update notices in generated artifacts when a newer version is available:
+  - `.tokensaver/reports/latest.md`
+  - `.tokensaver/briefs/latest.md`
+  - `.tokensaver/panel/index.html`
+- Environment switch to disable automatic artifact update checks:
+  - `TOKENSAVER_CHECK_UPDATE_ON_RUN=0`
+
+### Changed
+
+- Generated artifacts can now include TokenSaver update metadata when available.
+- Version information is defined before package runtime imports to avoid circular import issues.
+
+### Fixed
+
+- Update checks fail gracefully when network access is unavailable.
+- Agent tracing is not blocked by update-check failures.
+
+### Verification
+
+Commands:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli version
+python3 -m tokensaver.cli check-update --json --timeout 0.1
+```
+
+Test result:
+
+```text
+Ran 15 tests
+OK
+```
+
+### Compatibility Notes
+
+- Python `>=3.10`.
+- No runtime third-party Python dependency is required by the core package.
+- Existing traces remain readable.
+- Data remains local; update checks fetch only public version metadata.
+
 ## 0.2.0 - 2026-06-03
 
 ### Release Goal

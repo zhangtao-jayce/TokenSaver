@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,16 @@ from tokensaver.store import LocalStore
 
 
 class RuntimeTests(unittest.TestCase):
+    def setUp(self):
+        self._old_update_env = os.environ.get("TOKENSAVER_CHECK_UPDATE_ON_RUN")
+        os.environ["TOKENSAVER_CHECK_UPDATE_ON_RUN"] = "0"
+
+    def tearDown(self):
+        if self._old_update_env is None:
+            os.environ.pop("TOKENSAVER_CHECK_UPDATE_ON_RUN", None)
+        else:
+            os.environ["TOKENSAVER_CHECK_UPDATE_ON_RUN"] = self._old_update_env
+
     def test_runtime_trace_writes_summary_and_brief(self):
         with tempfile.TemporaryDirectory() as tmp:
             ts = TokenSaver(app="goldfinger", channel="feishu", store_dir=tmp)

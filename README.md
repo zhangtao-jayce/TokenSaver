@@ -78,6 +78,8 @@ Current implemented features:
 - tool output governance findings for dominant outputs and raw/full payloads
 - required quality field guardrails
 - before/after run comparison
+- local version and update checks
+- update notices in generated reports, repair briefs, and the local panel
 - local token estimation
 - editable model pricing metadata
 - CLI tools
@@ -181,6 +183,26 @@ Estimate tokens:
 
 ```bash
 python3 -m tokensaver.cli estimate "TokenSaver observes Agent runtime ROI locally."
+```
+
+Check installed version and updates:
+
+```bash
+python3 -m tokensaver.cli version
+python3 -m tokensaver.cli check-update
+python3 -m tokensaver.cli check-update --json
+```
+
+When a newer version is available, TokenSaver prints a copyable upgrade command:
+
+```bash
+pip install --upgrade --force-reinstall git+https://github.com/zhangtao-jayce/TokenSaver.git@COMMIT
+```
+
+TokenSaver also adds an update notice to generated local artifacts when a newer version is detected. To disable automatic update checks during Agent runs:
+
+```bash
+export TOKENSAVER_CHECK_UPDATE_ON_RUN=0
 ```
 
 Plan context/model strategy for a task:

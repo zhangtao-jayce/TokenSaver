@@ -1,6 +1,6 @@
 # Version Management
 
-Current version: `0.2.0`
+Current version: `0.3.0`
 
 Release date: 2026-06-03
 
@@ -33,6 +33,45 @@ Each release should record:
 - known limitations
 
 ## Current Release
+
+### 0.3.0
+
+Release date: 2026-06-03
+
+Release goal:
+
+Make it easy for seed users to discover and apply TokenSaver updates from inside already-integrated Agent applications.
+
+Iteration summary:
+
+TokenSaver `0.3.0` adds local version reporting, GitHub update checks, generated upgrade commands, and update notices in generated reports, repair briefs, and the local panel.
+
+Verification:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli version
+python3 -m tokensaver.cli check-update --json --timeout 0.1
+```
+
+Expected result:
+
+```text
+Ran 15 tests
+OK
+```
+
+Compatibility notes:
+
+- Existing traces remain readable.
+- Network failures during update checks do not block Agent tracing.
+- Automatic artifact update checks can be disabled with `TOKENSAVER_CHECK_UPDATE_ON_RUN=0`.
+
+Known limitations:
+
+- Update checks use public GitHub metadata from `main`.
+- Projects that pin a specific commit still need an explicit upgrade command to move forward.
 
 ### 0.2.0
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .diagnosis import diagnose_run
+from .profile import load_profile
 from .store import LocalStore
 from .task_classifier import classify_task
 from .tokenizer import estimate_tokens
@@ -22,10 +23,13 @@ class TokenSaver:
         app: str,
         channel: str = "unknown",
         store_dir: str | Path = ".tokensaver",
+        profile_path: str | Path | None = None,
+        profile: dict[str, Any] | None = None,
     ) -> None:
         self.app = app
         self.channel = channel
         self.store = LocalStore(store_dir)
+        self.profile = profile or load_profile(profile_path)
 
     def run(
         self,
@@ -181,7 +185,7 @@ class AgentRun:
         self._run["latency_ms"] = int((ended - self._started) * 1000)
         self._run["input_tokens"] = _sum_input_tokens(self._run)
         self._run["output_tokens"] = _sum_output_tokens(self._run)
-        self._run["diagnosis"] = diagnose_run(self._run)
+        self._run["diagnosis"] = diagnose_run(self._run, profile=self._tokensaver.profile)
         artifacts = self._tokensaver.store.save_run(self._run)
         self._run["artifacts"] = artifacts
         self.result = self._run
@@ -192,6 +196,8 @@ def record_agent_run(
     run: dict[str, Any],
     *,
     store_dir: str | Path = ".tokensaver",
+    profile_path: str | Path | None = None,
+    profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Record an externally constructed run trace."""
 
@@ -212,7 +218,8 @@ def record_agent_run(
         normalized["answer_tokens"] = estimate_tokens(str(normalized.get("answer") or ""))
     normalized.setdefault("input_tokens", _sum_input_tokens(normalized))
     normalized.setdefault("output_tokens", _sum_output_tokens(normalized))
-    normalized["diagnosis"] = diagnose_run(normalized)
+    active_profile = profile or load_profile(profile_path)
+    normalized["diagnosis"] = diagnose_run(normalized, profile=active_profile)
     artifacts = LocalStore(store_dir).save_run(normalized)
     normalized["artifacts"] = artifacts
     return normalized

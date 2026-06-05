@@ -1,5 +1,6 @@
-import unittest
 import tempfile
+import unittest
+from pathlib import Path
 
 from tokensaver.mcp_server import handle_request
 
@@ -11,6 +12,8 @@ class McpServerTests(unittest.TestCase):
         names = [tool["name"] for tool in response["result"]["tools"]]
         self.assertIn("tokensaver.plan_task", names)
         self.assertIn("tokensaver.estimate_tokens", names)
+        self.assertIn("tokensaver.init_profile", names)
+        self.assertIn("tokensaver.eval_fixtures", names)
         self.assertIn("tokensaver.doctor", names)
         self.assertIn("tokensaver.verify_install", names)
 
@@ -45,11 +48,11 @@ class McpServerTests(unittest.TestCase):
                         "arguments": {
                             "store_dir": tmp,
                             "run": {
-                                "app": "goldfinger",
-                                "channel": "feishu",
-                                "user_message": "MU 怎么了？",
-                                "task_type": "quick_quote_check",
-                                "route": "deep_stock_research",
+                                "app": "demo_agent",
+                                "channel": "chat",
+                                "user_message": "Summarize current status.",
+                                "task_type": "quick_question",
+                                "route": "deep_research",
                                 "context_items": [
                                     {
                                         "name": "full_history_log",
@@ -63,7 +66,7 @@ class McpServerTests(unittest.TestCase):
                 }
             )
             text = record_response["result"]["content"][0]["text"]
-            self.assertIn("wrong_route_for_task", text)
+            self.assertIn("deep_route_for_short_task", text)
 
             latest_response = handle_request(
                 {
@@ -76,7 +79,7 @@ class McpServerTests(unittest.TestCase):
                     },
                 }
             )
-            self.assertIn("goldfinger", latest_response["result"]["content"][0]["text"])
+            self.assertIn("demo_agent", latest_response["result"]["content"][0]["text"])
 
             brief_response = handle_request(
                 {
@@ -90,6 +93,59 @@ class McpServerTests(unittest.TestCase):
                 }
             )
             self.assertIn("TokenSaver Repair Brief", brief_response["result"]["content"][0]["text"])
+
+    def test_profile_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_path = Path(tmp) / "profile.yaml"
+            init_response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 8,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "tokensaver.init_profile",
+                        "arguments": {
+                            "template": "support-bot",
+                            "output": str(profile_path),
+                        },
+                    },
+                }
+            )
+            self.assertIn("my_support_bot", init_response["result"]["content"][0]["text"])
+            self.assertTrue(profile_path.exists())
+
+            fixtures_path = Path(tmp) / "fixtures.json"
+            fixtures_path.write_text(
+                """[
+  {
+    "id": "quick_question_basic",
+    "input": "Summarize status.",
+    "task_type": "quick_question",
+    "expected_required_fields": ["answer"],
+    "run": {
+      "task_type": "quick_question",
+      "answer": "ok",
+      "answer_tokens": 1
+    }
+  }
+]""",
+                encoding="utf-8",
+            )
+            eval_response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 9,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "tokensaver.eval_fixtures",
+                        "arguments": {
+                            "fixtures_path": str(fixtures_path),
+                            "profile_path": str(profile_path),
+                        },
+                    },
+                }
+            )
+            self.assertIn('"result": "accepted"', eval_response["result"]["content"][0]["text"])
 
     def test_install_tools(self):
         version_response = handle_request(

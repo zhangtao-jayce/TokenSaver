@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .brief import generate_repair_brief
 from .diagnosis import diagnose_run
+from .eval import evaluate_fixtures
 from .install import (
     build_upgrade_command,
     doctor,
@@ -18,6 +19,7 @@ from .install import (
     verify_install,
 )
 from .planner import plan_task
+from .profile import PROFILE_TEMPLATES, load_profile, write_profile_template
 from .runtime import record_agent_run
 from .store import LocalStore
 from .tokenizer import estimate_tokens
@@ -45,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     doctor_parser = subparsers.add_parser("doctor", help="Diagnose TokenSaver installation and project pins.")
     doctor_parser.add_argument("--json", action="store_true")
     doctor_parser.add_argument("--project-dir", default=".")
+    doctor_parser.add_argument("--profile", help="Validate and report a TokenSaver profile YAML/JSON.")
     doctor_parser.add_argument("--timeout", type=float, default=1.0)
     doctor_parser.add_argument("--offline", action="store_true")
     doctor_parser.add_argument("--fix-requirements", action="store_true", help="Update TokenSaver git pins in requirements.txt/pyproject.toml to the local commit.")
@@ -67,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     self_update_parser.add_argument("--commit")
     self_update_parser.add_argument("--execute", action="store_true", help="Actually run pip to update TokenSaver.")
 
+    profile_parser = subparsers.add_parser("init-profile", help="Create a .tokensaver/profile.yaml file.")
+    profile_parser.add_argument("--template", default="chatbot", choices=sorted(PROFILE_TEMPLATES))
+    profile_parser.add_argument("--output", default=".tokensaver/profile.yaml")
+    profile_parser.add_argument("--force", action="store_true", help="Overwrite an existing profile.")
+
     plan_parser = subparsers.add_parser("plan", help="Plan a task.")
     plan_parser.add_argument("message", nargs="?", help="User task message.")
     plan_parser.add_argument("--message-file", help="Read user message from file.")
@@ -84,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     record_parser = subparsers.add_parser("record-run", help="Record and diagnose an Agent run.")
     record_parser.add_argument("--file", help="Read run JSON from file. Defaults to stdin.")
     record_parser.add_argument("--store-dir", default=".tokensaver")
+    record_parser.add_argument("--profile", help="Read TokenSaver profile YAML/JSON.")
 
     latest_parser = subparsers.add_parser("latest", help="Read latest TokenSaver result.")
     latest_parser.add_argument(
@@ -93,12 +102,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Which latest artifact to print.",
     )
     latest_parser.add_argument("--store-dir", default=".tokensaver")
+    latest_parser.add_argument("--profile", help="Rebuild summary or brief with this profile.")
 
     diagnose_parser = subparsers.add_parser("diagnose-run", help="Diagnose a run JSON.")
     diagnose_parser.add_argument("--file", help="Read run JSON from file. Defaults to stdin.")
+    diagnose_parser.add_argument("--profile", help="Read TokenSaver profile YAML/JSON.")
 
     brief_parser = subparsers.add_parser("repair-brief", help="Generate a repair brief from run JSON.")
     brief_parser.add_argument("--file", help="Read run JSON from file. Defaults to stdin.")
+    brief_parser.add_argument("--profile", help="Read TokenSaver profile YAML/JSON.")
 
     list_parser = subparsers.add_parser("list", help="List recent TokenSaver runs.")
     list_parser.add_argument("--store-dir", default=".tokensaver")
@@ -115,15 +127,23 @@ def main(argv: list[str] | None = None) -> int:
     report_parser = subparsers.add_parser("report", help="Print a run summary.")
     report_parser.add_argument("run_id", nargs="?", default="latest")
     report_parser.add_argument("--store-dir", default=".tokensaver")
+    report_parser.add_argument("--profile", help="Re-diagnose the run with this profile.")
 
     brief_latest_parser = subparsers.add_parser("brief", help="Print a repair brief for latest or a run id.")
     brief_latest_parser.add_argument("run_id", nargs="?", default="latest")
     brief_latest_parser.add_argument("--store-dir", default=".tokensaver")
+    brief_latest_parser.add_argument("--profile", help="Re-diagnose the run with this profile.")
 
     compare_parser = subparsers.add_parser("compare", help="Compare two recorded runs.")
     compare_parser.add_argument("--before", required=True)
     compare_parser.add_argument("--after", required=True)
     compare_parser.add_argument("--store-dir", default=".tokensaver")
+    compare_parser.add_argument("--profile", help="Re-diagnose both runs with this profile before comparing.")
+
+    eval_parser = subparsers.add_parser("eval", help="Evaluate TokenSaver fixture JSON against a profile.")
+    eval_parser.add_argument("fixtures", help="Path to fixtures JSON array.")
+    eval_parser.add_argument("--profile", help="Read TokenSaver profile YAML/JSON.")
+    eval_parser.add_argument("--json", action="store_true")
 
     top_tools_parser = subparsers.add_parser("top-tools", help="Show expensive tools from recent runs.")
     top_tools_parser.add_argument("--store-dir", default=".tokensaver")
@@ -180,6 +200,14 @@ def main(argv: list[str] | None = None) -> int:
             timeout=args.timeout,
             check_remote=not args.offline,
         )
+        if args.profile:
+            profile = load_profile(args.profile)
+            result["profile"] = {
+                "path": args.profile,
+                "app": profile.get("app"),
+                "channel": profile.get("channel"),
+                "budget_count": len(profile.get("budgets") or {}),
+            }
         if args.fix_requirements:
             commit = ((result.get("version") or {}).get("local_commit") if isinstance(result.get("version"), dict) else None)
             if not commit:
@@ -242,6 +270,15 @@ def main(argv: list[str] | None = None) -> int:
             print("Re-run with --execute to perform the update.")
         return 0 if result.get("ok", True) else 1
 
+    if args.command == "init-profile":
+        output = Path(args.output)
+        if output.exists() and not args.force:
+            raise SystemExit(f"Profile already exists: {output}. Re-run with --force to overwrite.")
+        profile = write_profile_template(output, template=args.template)
+        result = {"path": str(output), "template": args.template, "app": profile.get("app")}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "plan":
         message = _read_arg_text(args.message, args.message_file)
         context_items = [_parse_context_arg(spec) for spec in args.context]
@@ -257,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "record-run":
         run = _read_json_arg(args.file)
-        recorded = record_agent_run(run, store_dir=args.store_dir)
+        recorded = record_agent_run(run, store_dir=args.store_dir, profile_path=args.profile)
         print(json.dumps(recorded, ensure_ascii=False, indent=2))
         return 0
 
@@ -266,6 +303,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.kind == "run":
             print(json.dumps(store.latest_run() or {}, ensure_ascii=False, indent=2))
             return 0
+        if args.profile:
+            run = store.latest_run()
+            if not run:
+                return 0
+            run = _diagnose_with_profile(run, args.profile)
+            from .brief import generate_run_summary
+
+            if args.kind == "brief":
+                print(generate_repair_brief(run), end="")
+                return 0
+            if args.kind == "summary":
+                print(generate_run_summary(run), end="")
+                return 0
         if args.kind == "brief":
             print(store.read_latest_brief(), end="")
             return 0
@@ -277,13 +327,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "diagnose-run":
         run = _read_json_arg(args.file)
-        print(json.dumps(diagnose_run(run), ensure_ascii=False, indent=2))
+        print(json.dumps(diagnose_run(run, profile=load_profile(args.profile)), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "repair-brief":
         run = _read_json_arg(args.file)
         diagnosed = dict(run)
-        diagnosed["diagnosis"] = diagnose_run(diagnosed)
+        diagnosed["diagnosis"] = diagnose_run(diagnosed, profile=load_profile(args.profile))
         print(generate_repair_brief(diagnosed), end="")
         return 0
 
@@ -308,6 +358,8 @@ def main(argv: list[str] | None = None) -> int:
         run = _get_stored_run(args.store_dir, args.run_id)
         if not run:
             raise SystemExit(f"Run not found: {args.run_id}")
+        if args.profile:
+            run = _diagnose_with_profile(run, args.profile)
         from .brief import generate_run_summary
 
         print(generate_run_summary(run), end="")
@@ -317,14 +369,34 @@ def main(argv: list[str] | None = None) -> int:
         run = _get_stored_run(args.store_dir, args.run_id)
         if not run:
             raise SystemExit(f"Run not found: {args.run_id}")
+        if args.profile:
+            run = _diagnose_with_profile(run, args.profile)
         print(generate_repair_brief(run), end="")
         return 0
 
     if args.command == "compare":
         store = LocalStore(args.store_dir)
-        result = store.compare_runs(args.before, args.after)
+        if args.profile:
+            before = _diagnose_with_profile(_require_run(store.find_run(args.before), args.before), args.profile)
+            after = _diagnose_with_profile(_require_run(store.find_run(args.after), args.after), args.profile)
+            from .store import compare_runs
+
+            result = compare_runs(before, after)
+        else:
+            result = store.compare_runs(args.before, args.after)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "eval":
+        try:
+            result = evaluate_fixtures(args.fixtures, profile_path=args.profile)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(str(exc)) from exc
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            _print_eval(result)
+        return 0 if result.get("result") == "accepted" else 1
 
     if args.command == "top-tools":
         store = LocalStore(args.store_dir)
@@ -410,6 +482,18 @@ def _get_stored_run(store_dir: str, run_id: str) -> dict[str, object] | None:
     return store.find_run(run_id)
 
 
+def _require_run(run: dict[str, object] | None, run_id: str) -> dict[str, object]:
+    if not run:
+        raise SystemExit(f"Run not found: {run_id}")
+    return run
+
+
+def _diagnose_with_profile(run: dict[str, object], profile_path: str) -> dict[str, object]:
+    diagnosed = dict(run)
+    diagnosed["diagnosis"] = diagnose_run(diagnosed, profile=load_profile(profile_path))
+    return diagnosed
+
+
 def _top_tools(runs: list[dict[str, object]]) -> list[dict[str, object]]:
     totals: dict[str, dict[str, object]] = {}
     for run in runs:
@@ -425,6 +509,17 @@ def _top_tools(runs: list[dict[str, object]]) -> list[dict[str, object]]:
             item["input_tokens"] = int(item["input_tokens"]) + int(call.get("input_tokens") or 0)
             item["output_tokens"] = int(item["output_tokens"]) + int(call.get("output_tokens") or 0)
     return sorted(totals.values(), key=lambda item: int(item["output_tokens"]), reverse=True)
+
+
+def _print_eval(result: dict[str, object]) -> None:
+    print(f"Result: {result.get('result')}")
+    print(f"Cases: {result.get('accepted')}/{result.get('total')} accepted")
+    for case in result.get("cases") or []:
+        if not isinstance(case, dict):
+            continue
+        failures = case.get("failures") or []
+        suffix = f" failures={','.join(str(item) for item in failures)}" if failures else ""
+        print(f"- {case.get('id')}: {case.get('result')} roi_score={case.get('roi_score')}{suffix}")
 
 
 def _print_update_info(data: dict[str, object]) -> None:
@@ -491,6 +586,14 @@ def _print_doctor(result: dict[str, object]) -> None:
             print("Fixed dependency files:")
             for path in fix.get("changed") or []:
                 print(f"- {path}")
+    profile = result.get("profile")
+    if isinstance(profile, dict):
+        print("")
+        print("Profile:")
+        print(f"  path: {profile.get('path')}")
+        print(f"  app: {profile.get('app')}")
+        print(f"  channel: {profile.get('channel')}")
+        print(f"  budgets: {profile.get('budget_count')}")
     print("")
     print("Upgrade command:")
     print(result.get("upgrade_command") or "")

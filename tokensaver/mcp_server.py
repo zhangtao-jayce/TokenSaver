@@ -9,8 +9,10 @@ from typing import Any
 from . import __version__
 from .brief import generate_repair_brief
 from .diagnosis import diagnose_run
+from .eval import evaluate_fixtures
 from .install import build_upgrade_command, doctor, verbose_version_info, verify_install
 from .planner import plan_task
+from .profile import PROFILE_TEMPLATES, load_profile, write_profile_template
 from .runtime import record_agent_run
 from .store import LocalStore
 from .tokenizer import estimate_tokens
@@ -61,8 +63,33 @@ TOOLS = [
             "properties": {
                 "run": {"type": "object"},
                 "store_dir": {"type": "string"},
+                "profile_path": {"type": "string"},
             },
             "required": ["run"],
+        },
+    },
+    {
+        "name": "tokensaver.init_profile",
+        "description": "Create a TokenSaver profile YAML file from a built-in template.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "template": {"type": "string", "enum": sorted(PROFILE_TEMPLATES)},
+                "output": {"type": "string"},
+                "force": {"type": "boolean"},
+            },
+        },
+    },
+    {
+        "name": "tokensaver.eval_fixtures",
+        "description": "Evaluate TokenSaver fixture JSON against an optional profile.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "fixtures_path": {"type": "string"},
+                "profile_path": {"type": "string"},
+            },
+            "required": ["fixtures_path"],
         },
     },
     {
@@ -84,6 +111,7 @@ TOOLS = [
             "properties": {
                 "run": {"type": "object"},
                 "store_dir": {"type": "string"},
+                "profile_path": {"type": "string"},
             },
         },
     },
@@ -95,6 +123,7 @@ TOOLS = [
             "properties": {
                 "run": {"type": "object"},
                 "store_dir": {"type": "string"},
+                "profile_path": {"type": "string"},
             },
         },
     },
@@ -129,6 +158,7 @@ TOOLS = [
                 "project_dir": {"type": "string"},
                 "timeout": {"type": "number"},
                 "offline": {"type": "boolean"},
+                "profile_path": {"type": "string"},
             },
         },
     },
@@ -219,6 +249,32 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         result = record_agent_run(
             arguments.get("run") or {},
             store_dir=arguments.get("store_dir") or ".tokensaver",
+            profile_path=arguments.get("profile_path"),
+        )
+        return _tool_text(result)
+
+    if name == "tokensaver.init_profile":
+        from pathlib import Path
+
+        output = Path(arguments.get("output") or ".tokensaver/profile.yaml")
+        if output.exists() and not bool(arguments.get("force")):
+            return {
+                "isError": True,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Profile already exists: {output}. Set force=true to overwrite.",
+                    }
+                ],
+            }
+        template = arguments.get("template") or "chatbot"
+        profile = write_profile_template(output, template=template)
+        return _tool_text({"path": str(output), "template": template, "app": profile.get("app")})
+
+    if name == "tokensaver.eval_fixtures":
+        result = evaluate_fixtures(
+            arguments.get("fixtures_path"),
+            profile_path=arguments.get("profile_path"),
         )
         return _tool_text(result)
 
@@ -231,14 +287,14 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         run = arguments.get("run") or _latest_run(arguments.get("store_dir") or ".tokensaver")
         if not run:
             return {"isError": True, "content": [{"type": "text", "text": "No run provided or stored."}]}
-        return _tool_text(diagnose_run(run))
+        return _tool_text(diagnose_run(run, profile=load_profile(arguments.get("profile_path"))))
 
     if name == "tokensaver.generate_repair_brief":
         run = arguments.get("run") or _latest_run(arguments.get("store_dir") or ".tokensaver")
         if not run:
             return {"isError": True, "content": [{"type": "text", "text": "No run provided or stored."}]}
         diagnosed = dict(run)
-        diagnosed["diagnosis"] = diagnose_run(diagnosed)
+        diagnosed["diagnosis"] = diagnose_run(diagnosed, profile=load_profile(arguments.get("profile_path")))
         return _tool_text({"brief": generate_repair_brief(diagnosed)})
 
     if name == "tokensaver.get_version":
@@ -267,13 +323,20 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return _tool_text(result)
 
     if name == "tokensaver.doctor":
-        return _tool_text(
-            doctor(
-                project_dir=arguments.get("project_dir") or ".",
-                timeout=float(arguments.get("timeout", 1.0)),
-                check_remote=not bool(arguments.get("offline")),
-            )
+        result = doctor(
+            project_dir=arguments.get("project_dir") or ".",
+            timeout=float(arguments.get("timeout", 1.0)),
+            check_remote=not bool(arguments.get("offline")),
         )
+        if arguments.get("profile_path"):
+            profile = load_profile(arguments.get("profile_path"))
+            result["profile"] = {
+                "path": arguments.get("profile_path"),
+                "app": profile.get("app"),
+                "channel": profile.get("channel"),
+                "budget_count": len(profile.get("budgets") or {}),
+            }
+        return _tool_text(result)
 
     if name == "tokensaver.verify_install":
         return _tool_text(

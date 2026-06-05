@@ -193,8 +193,8 @@ def _render_update_notice(update_info: dict[str, Any] | None) -> str:
 
 
 def compare_runs(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
-    before_codes = set((before.get("diagnosis") or {}).get("finding_codes") or [])
-    after_codes = set((after.get("diagnosis") or {}).get("finding_codes") or [])
+    before_codes = _normalized_finding_codes(before)
+    after_codes = _normalized_finding_codes(after)
     fields = ("input_tokens", "output_tokens", "latency_ms", "answer_tokens")
     deltas = {}
     for field in fields:
@@ -208,6 +208,10 @@ def compare_runs(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any
         }
     before_score = int((before.get("diagnosis") or {}).get("roi_score", 100))
     after_score = int((after.get("diagnosis") or {}).get("roi_score", 100))
+    quality_blockers = sorted(
+        code for code in after_codes if code in {"required_field_missing", "quality_regression_risk"}
+    )
+    accepted = after_score >= before_score and not quality_blockers
     return {
         "before_run_id": before.get("run_id"),
         "after_run_id": after.get("run_id"),
@@ -220,6 +224,8 @@ def compare_runs(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any
         "resolved_findings": sorted(before_codes - after_codes),
         "new_findings": sorted(after_codes - before_codes),
         "unchanged_findings": sorted(before_codes & after_codes),
+        "result": "accepted" if accepted else "rejected",
+        "quality_blockers": quality_blockers,
     }
 
 
@@ -227,3 +233,26 @@ def _pct_delta(before: int, after: int) -> float | None:
     if before == 0:
         return None
     return round((after - before) / before * 100, 2)
+
+
+_FINDING_CODE_ALIASES = {
+    "wrong_route_for_task": "deep_route_for_short_task",
+    "tool_output_too_large": "oversized_tool_output",
+    "raw_tool_payload": "raw_payload_in_default_path",
+    "repeated_tool_without_cache": "repeated_tool_call_without_cache",
+    "context_item_too_large": "oversized_context_item",
+    "history_context_waste": "history_context_pollution",
+    "answer_too_long_for_channel": "channel_output_over_budget",
+    "overpowered_model_for_quick_task": "strong_model_for_simple_task",
+    "missing_required_quality_field": "required_field_missing",
+    "quality_fields_not_verified": "quality_regression_risk",
+}
+
+
+def normalize_finding_code(code: str) -> str:
+    return _FINDING_CODE_ALIASES.get(code, code)
+
+
+def _normalized_finding_codes(run: dict[str, Any]) -> set[str]:
+    codes = (run.get("diagnosis") or {}).get("finding_codes") or []
+    return {normalize_finding_code(str(code)) for code in codes}

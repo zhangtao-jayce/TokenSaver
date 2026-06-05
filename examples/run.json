@@ -1,31 +1,31 @@
 {
-  "app": "goldfinger",
-  "channel": "feishu",
-  "user_message": "MU 怎么了？",
-  "task_type": "quick_quote_check",
-  "route": "deep_stock_research",
+  "app": "my_agent",
+  "channel": "chat",
+  "user_message": "Summarize the current status.",
+  "task_type": "quick_question",
+  "route": "deep_research",
   "context_items": [
     {
-      "name": "full_history_log",
+      "name": "conversation_history",
       "kind": "history",
       "content": "history history history history history history history history history history"
     },
     {
-      "name": "price",
-      "kind": "market_data",
-      "content": "MU current price and intraday move"
+      "name": "records",
+      "kind": "tool_result",
+      "content": "Current records relevant to this request"
     }
   ],
   "tool_calls": [
     {
-      "name": "price",
-      "output_text": "price payload",
+      "name": "read_records",
+      "output_text": "records payload",
       "latency_ms": 120,
       "cached": false
     },
     {
-      "name": "price",
-      "output_text": "price payload",
+      "name": "read_records",
+      "output_text": "records payload",
       "latency_ms": 110,
       "cached": false
     }
@@ -37,5 +37,5 @@
       "output_text": "answer"
     }
   ],
-  "answer": "MU intraday move needs a concise explanation with source attribution."
+  "answer": "Current status needs a concise answer with evidence and next action."
 }

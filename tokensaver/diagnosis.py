@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .profile import load_profile, profile_required_fields
+
 
 @dataclass(frozen=True)
 class DiagnosisFinding:
@@ -28,67 +30,10 @@ class DiagnosisFinding:
         }
 
 
-_TASK_BUDGETS: dict[str, dict[str, int]] = {
-    "quick_quote_check": {"input_tokens": 3_000, "output_tokens": 500, "latency_ms": 20_000},
-    "light_qa": {"input_tokens": 3_000, "output_tokens": 500, "latency_ms": 20_000},
-    "operation_confirmation": {"input_tokens": 5_000, "output_tokens": 700, "latency_ms": 30_000},
-    "intraday_anomaly_attribution": {"input_tokens": 8_000, "output_tokens": 1_000, "latency_ms": 60_000},
-    "realtime_analysis": {"input_tokens": 8_000, "output_tokens": 1_000, "latency_ms": 60_000},
-    "position_risk_check": {"input_tokens": 8_000, "output_tokens": 1_000, "latency_ms": 60_000},
-    "daily_summary": {"input_tokens": 12_000, "output_tokens": 1_500, "latency_ms": 90_000},
-    "stock_agent_message": {"input_tokens": 12_000, "output_tokens": 1_500, "latency_ms": 60_000},
-    "deep_stock_research": {"input_tokens": 30_000, "output_tokens": 3_000, "latency_ms": 180_000},
-    "deep_analysis": {"input_tokens": 30_000, "output_tokens": 3_000, "latency_ms": 180_000},
-    "system_debug": {"input_tokens": 12_000, "output_tokens": 1_500, "latency_ms": 90_000},
-}
-
-_CHANNEL_TASK_BUDGETS: dict[tuple[str, str], dict[str, int]] = {
-    ("feishu", "stock_agent_message"): {
-        "input_tokens": 12_000,
-        "output_tokens": 1_500,
-        "latency_ms": 60_000,
-    },
-    ("lark", "stock_agent_message"): {
-        "input_tokens": 12_000,
-        "output_tokens": 1_500,
-        "latency_ms": 60_000,
-    },
-    ("slack", "stock_agent_message"): {
-        "input_tokens": 12_000,
-        "output_tokens": 1_500,
-        "latency_ms": 60_000,
-    },
-    ("feishu", "quick_quote_check"): {
-        "input_tokens": 8_000,
-        "output_tokens": 800,
-        "latency_ms": 30_000,
-    },
-    ("report", "deep_stock_research"): {
-        "input_tokens": 60_000,
-        "output_tokens": 8_000,
-        "latency_ms": 300_000,
-    },
-    ("report", "deep_analysis"): {
-        "input_tokens": 60_000,
-        "output_tokens": 8_000,
-        "latency_ms": 300_000,
-    },
-}
-
-_SHORT_CHANNELS = {"feishu", "slack", "wechat", "lark"}
-_DEEP_ROUTE_WORDS = ("deep", "research", "maestro", "investigate", "report")
-_QUICK_TASKS = {"quick_quote_check", "light_qa"}
-_SENSITIVE_TASKS = {
-    "intraday_anomaly_attribution",
-    "realtime_analysis",
-    "position_risk_check",
-    "operation_confirmation",
-}
-
-
-def diagnose_run(run: dict[str, Any]) -> dict[str, Any]:
+def diagnose_run(run: dict[str, Any], *, profile: dict[str, Any] | None = None) -> dict[str, Any]:
     """Diagnose one Agent run using deterministic local rules."""
 
+    profile = profile or load_profile()
     task_type = str(run.get("task_type") or "unknown")
     route = str(run.get("route") or "")
     channel = str(run.get("channel") or "").lower()
@@ -99,10 +44,15 @@ def diagnose_run(run: dict[str, Any]) -> dict[str, Any]:
     context_items = list(run.get("context_items") or [])
     tool_calls = list(run.get("tool_calls") or [])
     model_calls = list(run.get("model_calls") or [])
+    thresholds = dict(profile.get("thresholds") or {})
+    quick_tasks = {str(item) for item in profile.get("quick_tasks") or []}
+    short_channels = {str(item).lower() for item in profile.get("short_channels") or []}
+    sensitive_tasks = {str(item) for item in profile.get("sensitive_tasks") or []}
 
     findings: list[DiagnosisFinding] = []
-    budget = _resolve_budget(run, channel=channel, task_type=task_type)
+    budget = _resolve_budget(run, channel=channel, task_type=task_type, profile=profile)
     top_consumers = _top_token_consumers(run)
+    top_latency_consumers = _top_latency_consumers(run)
 
     if input_tokens > budget["input_tokens"]:
         findings.append(
@@ -160,10 +110,10 @@ def diagnose_run(run: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    if task_type in _QUICK_TASKS and _looks_deep_route(route):
+    if task_type in quick_tasks and _looks_deep_route(route, profile=profile):
         findings.append(
             DiagnosisFinding(
-                code="wrong_route_for_task",
+                code="deep_route_for_short_task",
                 severity="high",
                 message="A short task appears to have used a deep workflow route.",
                 evidence={"task_type": task_type, "route": route},
@@ -174,19 +124,20 @@ def diagnose_run(run: dict[str, Any]) -> dict[str, Any]:
         )
 
     channel_answer_tokens = answer_tokens if answer_tokens > 0 else output_tokens
-    if channel in _SHORT_CHANNELS and channel_answer_tokens > 1_200:
-        severity = "high" if channel_answer_tokens > 5_000 else "medium"
+    short_threshold = int(thresholds.get("short_channel_answer_tokens") or 1_200)
+    short_high_threshold = int(thresholds.get("short_channel_answer_high_tokens") or 5_000)
+    if channel in short_channels and channel_answer_tokens > short_threshold:
+        severity = "high" if channel_answer_tokens > short_high_threshold else "medium"
         findings.append(
             DiagnosisFinding(
-                code="answer_too_long_for_channel",
+                code="channel_output_over_budget",
                 severity=severity,
                 message="The answer is long for a short-message channel.",
                 evidence={
                     "channel": channel,
                     "answer_tokens": channel_answer_tokens,
-                    "warning_threshold": 1_200,
-                    "medium_threshold": 2_000,
-                    "high_threshold": 5_000,
+                    "warning_threshold": short_threshold,
+                    "high_threshold": short_high_threshold,
                 },
                 recommendation="Limit default channel answers to a short summary unless the user asks to expand.",
                 owner_area="channel",
@@ -199,10 +150,10 @@ def diagnose_run(run: dict[str, Any]) -> dict[str, Any]:
         kind = str(item.get("kind") or "").lower()
         tokens = int(item.get("tokens") or 0)
         label = f"{name} {kind}".lower()
-        if tokens > 8_000:
+        if tokens > int(thresholds.get("large_context_item_tokens") or 8_000):
             findings.append(
                 DiagnosisFinding(
-                    code="context_item_too_large",
+                    code="oversized_context_item",
                     severity="high",
                     message="One context item is very large.",
                     evidence={"context": name, "tokens": tokens},
@@ -211,22 +162,48 @@ def diagnose_run(run: dict[str, Any]) -> dict[str, Any]:
                     impact="Large context items can crowd out more relevant current evidence.",
                 )
             )
-        if task_type in _QUICK_TASKS and tokens > 2_000 and _is_history_or_log(label):
+        if (
+            task_type in quick_tasks
+            and tokens > int(thresholds.get("quick_history_context_tokens") or 2_000)
+            and _is_history_or_log(label)
+        ):
             findings.append(
                 DiagnosisFinding(
-                    code="history_context_waste",
+                    code="history_context_pollution",
                     severity="high",
                     message="History or log context is large for a quick task.",
                     evidence={"context": name, "tokens": tokens, "task_type": task_type},
                     recommendation="Use a rolling summary for quick tasks instead of raw history or logs.",
                     owner_area="context",
                     impact="Raw history is often low ROI for simple requests.",
-                )
             )
+        )
 
-    _add_tool_findings(findings, tool_calls, input_tokens)
-    _add_model_findings(findings, model_calls, task_type)
-    _add_quality_findings(findings, run, task_type)
+    _add_react_context_findings(
+        findings,
+        run,
+        budget=budget,
+        profile=profile,
+    )
+    _add_tool_findings(findings, tool_calls, input_tokens, profile=profile)
+    _add_latency_tool_findings(
+        findings,
+        tool_calls,
+        latency_ms=latency_ms,
+        budget=budget,
+        profile=profile,
+    )
+    _add_model_findings(findings, model_calls, task_type, quick_tasks=quick_tasks)
+    _add_route_findings(findings, run, task_type=task_type, route=route, profile=profile)
+    _add_quality_findings(
+        findings,
+        run,
+        task_type,
+        channel=channel,
+        short_channels=short_channels,
+        sensitive_tasks=sensitive_tasks,
+        profile=profile,
+    )
 
     codes = [finding.code for finding in findings]
     dimensions = _score_dimensions(
@@ -242,19 +219,31 @@ def diagnose_run(run: dict[str, Any]) -> dict[str, Any]:
         "dimensions": dimensions,
         "budget": budget,
         "top_token_consumers": top_consumers,
+        "top_latency_consumers": top_latency_consumers,
+        "root_causes": _root_causes(findings),
+        "quality_guardrail_fields": profile_required_fields(profile, task_type),
         "finding_codes": codes,
         "findings": [finding.to_dict() for finding in findings],
         "status": "ok" if not findings else "needs_attention",
     }
 
 
-def _resolve_budget(run: dict[str, Any], *, channel: str, task_type: str) -> dict[str, int]:
-    budget = dict(_TASK_BUDGETS.get(task_type, {
+def _resolve_budget(
+    run: dict[str, Any],
+    *,
+    channel: str,
+    task_type: str,
+    profile: dict[str, Any],
+) -> dict[str, int]:
+    budgets = profile.get("budgets") or {}
+    channel_budgets = profile.get("channel_budgets") or {}
+    budget = dict(budgets.get(task_type) or budgets.get("default") or {
         "input_tokens": 12_000,
         "output_tokens": 1_500,
         "latency_ms": 90_000,
-    }))
-    budget.update(_CHANNEL_TASK_BUDGETS.get((channel, task_type), {}))
+    })
+    channel_budget = ((channel_budgets.get(channel) or {}).get(task_type) or {})
+    budget.update(channel_budget)
     explicit = run.get("budget") or (run.get("metadata") or {}).get("budget") or {}
     for key in ("input_tokens", "output_tokens", "latency_ms"):
         value = explicit.get(key)
@@ -263,30 +252,108 @@ def _resolve_budget(run: dict[str, Any], *, channel: str, task_type: str) -> dic
     return budget
 
 
-def _looks_deep_route(route: str) -> bool:
+def _looks_deep_route(route: str, *, profile: dict[str, Any]) -> bool:
     lowered = route.lower()
-    return any(word in lowered for word in _DEEP_ROUTE_WORDS)
+    words = profile.get("deep_route_words") or ["deep", "research", "investigate", "report"]
+    return any(str(word).lower() in lowered for word in words)
 
 
 def _is_history_or_log(label: str) -> bool:
     return any(word in label for word in ("history", "log", "conversation", "memory"))
 
 
+def _add_react_context_findings(
+    findings: list[DiagnosisFinding],
+    run: dict[str, Any],
+    *,
+    budget: dict[str, int],
+    profile: dict[str, Any],
+) -> None:
+    model_calls = list(run.get("model_calls") or [])
+    context_items = list(run.get("context_items") or [])
+    model_call_count = len(model_calls)
+    if model_call_count < 3:
+        return
+
+    thresholds = dict(profile.get("thresholds") or {})
+    min_repeated_tokens = int(thresholds.get("repeated_context_item_tokens") or 1_000)
+    min_react_calls = int(thresholds.get("react_loop_model_calls") or 4)
+    total_model_input = sum(int(call.get("input_tokens") or 0) for call in model_calls)
+
+    repeated_contexts: list[dict[str, Any]] = []
+    for item in context_items:
+        tokens = int(item.get("tokens") or 0)
+        if tokens < min_repeated_tokens:
+            continue
+        name = str(item.get("name") or "unnamed")
+        repeated_contexts.append(
+            {
+                "context": name,
+                "tokens": tokens,
+                "repeated_model_calls": model_call_count,
+                "estimated_total_repeated_tokens": tokens * model_call_count,
+            }
+        )
+
+    for item in repeated_contexts:
+        if item["estimated_total_repeated_tokens"] < int(budget["input_tokens"] * 0.5):
+            continue
+        findings.append(
+            DiagnosisFinding(
+                code="oversized_repeated_context_item",
+                severity="high",
+                message="A large context item appears to be replayed across multiple model calls.",
+                evidence=item,
+                recommendation="Split long prompts or context into route-specific profiles, and pass only summarized tool state into later model calls.",
+                owner_area="context/prompt",
+                impact="Repeated context can dominate input cost even when each individual model call looks moderate.",
+            )
+        )
+
+    if model_call_count >= min_react_calls and repeated_contexts:
+        largest = max(repeated_contexts, key=lambda item: int(item["estimated_total_repeated_tokens"]))
+        first_input = int(model_calls[0].get("input_tokens") or 0)
+        last_input = int(model_calls[-1].get("input_tokens") or 0)
+        findings.append(
+            DiagnosisFinding(
+                code="react_loop_token_amplification",
+                severity="high",
+                message="A multi-step ReAct loop appears to replay accumulated context across model calls.",
+                evidence={
+                    "model_calls_count": model_call_count,
+                    "first_call_input_tokens": first_input,
+                    "last_call_input_tokens": last_input,
+                    "total_model_input_tokens": total_model_input,
+                    "largest_repeated_context": largest["context"],
+                    "largest_estimated_repeated_tokens": largest["estimated_total_repeated_tokens"],
+                },
+                recommendation="After tool calls, replace full ReAct message history with a rolling summary and use a compact final-answer prompt.",
+                owner_area="agent_loop",
+                impact="ReAct loops multiply stable prompt and context costs by the number of planning steps.",
+            )
+        )
+
+
 def _add_tool_findings(
     findings: list[DiagnosisFinding],
     tool_calls: list[dict[str, Any]],
     input_tokens: int,
+    *,
+    profile: dict[str, Any],
 ) -> None:
+    thresholds = dict(profile.get("thresholds") or {})
+    large_output_tokens = int(thresholds.get("large_tool_output_tokens") or 4_000)
+    dominant_share = float(thresholds.get("dominant_tool_output_share") or 0.30)
     seen: dict[str, int] = {}
     for call in tool_calls:
         name = str(call.get("name") or "unnamed")
         seen[name] = seen.get(name, 0) + 1
         output_tokens = int(call.get("output_tokens") or 0)
         cached = bool(call.get("cached"))
-        if output_tokens > 4_000:
+        if output_tokens > large_output_tokens:
             findings.append(
                 DiagnosisFinding(
-                    code="tool_output_too_large",
+                    code="oversized_tool_output",
                     severity="medium",
                     message="A tool returned a large output.",
                     evidence={"tool": name, "output_tokens": output_tokens},
@@ -295,7 +362,7 @@ def _add_tool_findings(
                     impact="Oversized tool payloads are a common source of input cost and context dilution.",
                 )
             )
-        if input_tokens > 0 and output_tokens / input_tokens >= 0.30:
+        if input_tokens > 0 and output_tokens / input_tokens >= dominant_share:
             findings.append(
                 DiagnosisFinding(
                     code="dominant_tool_output",
@@ -312,10 +379,10 @@ def _add_tool_findings(
                     impact="Dominant tool outputs usually indicate raw records, logs, or unfiltered JSON.",
                 )
             )
-        if _looks_raw_payload(call):
+        if _looks_raw_payload(call, profile=profile):
             findings.append(
                 DiagnosisFinding(
-                    code="raw_tool_payload",
+                    code="raw_payload_in_default_path",
                     severity="medium",
                     message="A tool output appears to be a raw or full-detail payload.",
                     evidence={"tool": name, "metadata": call.get("metadata") or {}},
@@ -327,7 +394,7 @@ def _add_tool_findings(
         if seen[name] > 1 and not cached:
             findings.append(
                 DiagnosisFinding(
-                    code="repeated_tool_without_cache",
+                    code="repeated_tool_call_without_cache",
                     severity="medium",
                     message="A tool was called repeatedly without cache evidence.",
                     evidence={"tool": name, "calls": seen[name]},
@@ -338,19 +405,97 @@ def _add_tool_findings(
             )
 
 
+def _add_latency_tool_findings(
+    findings: list[DiagnosisFinding],
+    tool_calls: list[dict[str, Any]],
+    *,
+    latency_ms: int,
+    budget: dict[str, int],
+    profile: dict[str, Any],
+) -> None:
+    thresholds = dict(profile.get("thresholds") or {})
+    slow_tool_ms = int(thresholds.get("slow_tool_latency_ms") or 30_000)
+    low_value_output_tokens = int(thresholds.get("low_value_tool_output_tokens") or 50)
+    for call in tool_calls:
+        name = str(call.get("name") or "unnamed")
+        call_latency = int(call.get("latency_ms") or 0)
+        output_tokens = int(call.get("output_tokens") or 0)
+        metadata = call.get("metadata") or {}
+        if call_latency >= slow_tool_ms and output_tokens <= low_value_output_tokens:
+            evidence = {
+                "tool": name,
+                "latency_ms": call_latency,
+                "output_tokens": output_tokens,
+                "latency_share": round(call_latency / latency_ms, 3) if latency_ms else None,
+            }
+            findings.append(
+                DiagnosisFinding(
+                    code="expensive_low_value_tool_call",
+                    severity="high",
+                    message="A slow tool call returned very little usable output.",
+                    evidence=evidence,
+                    recommendation="Add a timeout fallback or cheaper snapshot path, and let the Agent stop deepening when the tool returns low-value output.",
+                    owner_area="tool/fallback",
+                    impact="Slow low-value tools dominate latency without improving the final answer enough.",
+                )
+            )
+        success = metadata.get("success", call.get("success"))
+        semantic_success = metadata.get("semantic_success", call.get("semantic_success"))
+        if semantic_success is False or (
+            success is True and call_latency >= slow_tool_ms and output_tokens <= low_value_output_tokens
+        ):
+            findings.append(
+                DiagnosisFinding(
+                    code="tool_success_mismatch",
+                    severity="medium",
+                    message="A tool appears transport-successful but semantically low-value or failed.",
+                    evidence={
+                        "tool": name,
+                        "success": success,
+                        "semantic_success": semantic_success,
+                        "latency_ms": call_latency,
+                        "output_tokens": output_tokens,
+                    },
+                    recommendation="Trace transport_success separately from semantic_success, error_type, fallback_used, and result_quality.",
+                    owner_area="tool/schema",
+                    impact="A success flag that only means process completion hides tool failures from route and cache decisions.",
+                )
+            )
+        fallback_used = bool(metadata.get("fallback_used", call.get("fallback_used", False)))
+        if call_latency > int(budget["latency_ms"] * 0.5) and not fallback_used:
+            findings.append(
+                DiagnosisFinding(
+                    code="missing_fallback_for_slow_tool",
+                    severity="medium",
+                    message="A slow tool consumed a large share of the latency budget without fallback evidence.",
+                    evidence={
+                        "tool": name,
+                        "latency_ms": call_latency,
+                        "budget_latency_ms": budget["latency_ms"],
+                        "fallback_used": fallback_used,
+                    },
+                    recommendation="Define timeout thresholds and fallback behavior for this tool in the default route.",
+                    owner_area="tool/fallback",
+                    impact="Missing fallback paths make chat workflows wait for tools that may not return useful evidence.",
+                )
+            )
+
+
 def _add_model_findings(
     findings: list[DiagnosisFinding],
     model_calls: list[dict[str, Any]],
     task_type: str,
+    *,
+    quick_tasks: set[str],
 ) -> None:
-    if task_type not in _QUICK_TASKS:
+    if task_type not in quick_tasks:
         return
     for call in model_calls:
         model = str(call.get("model") or "").lower()
         if any(word in model for word in ("opus", "sonnet", "gpt-4.1")):
             findings.append(
                 DiagnosisFinding(
-                    code="overpowered_model_for_quick_task",
+                    code="strong_model_for_simple_task",
                     severity="medium",
                     message="A quick task used a strong model.",
                     evidence={"task_type": task_type, "model": call.get("model")},
@@ -361,13 +506,66 @@ def _add_model_findings(
             )
 
 
+def _add_route_findings(
+    findings: list[DiagnosisFinding],
+    run: dict[str, Any],
+    *,
+    task_type: str,
+    route: str,
+    profile: dict[str, Any],
+) -> None:
+    message = str(run.get("user_message") or "")
+    lowered = message.lower()
+    intent_patterns = profile.get("intent_patterns") or {}
+    if not isinstance(intent_patterns, dict):
+        return
+    for intent_name, pattern in intent_patterns.items():
+        if not isinstance(pattern, dict):
+            continue
+        keywords = [str(word).lower() for word in pattern.get("keywords") or []]
+        if not keywords or not any(word in lowered for word in keywords):
+            continue
+        expected_words = [str(word).lower() for word in pattern.get("expected_route_words") or []]
+        if expected_words and any(
+            word in task_type.lower() or word in route.lower() for word in expected_words
+        ):
+            continue
+        candidates = [
+            str(item)
+            for item in pattern.get("expected_task_type_candidates") or [str(intent_name)]
+        ]
+        findings.append(
+            DiagnosisFinding(
+                code="task_route_mismatch",
+                severity="medium",
+                message="The user request matches a configured intent pattern, but the recorded task or route looks generic.",
+                evidence={
+                    "user_message": message,
+                    "intent_pattern": str(intent_name),
+                    "recorded_task_type": task_type,
+                    "route": route,
+                    "expected_task_type_candidates": candidates,
+                },
+                recommendation="Add profile intent mapping so matched requests use the intended task budget, route, prompt, and answer policy.",
+                owner_area="router/profile",
+                impact="A generic route can apply the wrong prompt, budget, tool set, and answer policy.",
+            )
+        )
+        return
+
+
 def _add_quality_findings(
     findings: list[DiagnosisFinding],
     run: dict[str, Any],
     task_type: str,
+    *,
+    channel: str,
+    short_channels: set[str],
+    sensitive_tasks: set[str],
+    profile: dict[str, Any],
 ) -> None:
     quality = run.get("quality_signals") or {}
-    required_fields = list(run.get("quality_requirements") or [])
+    required_fields = list(run.get("quality_requirements") or profile_required_fields(profile, task_type))
     if quality.get("user_correction"):
         findings.append(
             DiagnosisFinding(
@@ -386,7 +584,7 @@ def _add_quality_findings(
     if missing_fields:
         findings.append(
             DiagnosisFinding(
-                code="missing_required_quality_field",
+                code="required_field_missing",
                 severity="high",
                 message="The answer or compact schema missed required quality fields.",
                 evidence={"missing_required_fields": list(missing_fields)},
@@ -398,7 +596,7 @@ def _add_quality_findings(
     elif required_fields and not str(run.get("answer") or "").strip():
         findings.append(
             DiagnosisFinding(
-                code="quality_fields_not_verified",
+                code="quality_regression_risk",
                 severity="low",
                 message="Required quality fields were registered but no final answer was recorded for verification.",
                 evidence={"required_fields": required_fields},
@@ -407,7 +605,14 @@ def _add_quality_findings(
                 impact="Unverified quality guardrails make before/after optimization less reliable.",
             )
         )
-    if task_type in _SENSITIVE_TASKS:
+    _add_answer_density_findings(
+        findings,
+        run,
+        channel=channel,
+        short_channels=short_channels,
+        profile=profile,
+    )
+    if task_type in sensitive_tasks:
         evidence = str(run.get("answer") or "") + " " + str(run.get("metadata") or {})
         if not _has_source_signal(evidence):
             findings.append(
@@ -423,7 +628,53 @@ def _add_quality_findings(
             )
 
 
-def _looks_raw_payload(call: dict[str, Any]) -> bool:
+def _add_answer_density_findings(
+    findings: list[DiagnosisFinding],
+    run: dict[str, Any],
+    *,
+    channel: str,
+    short_channels: set[str],
+    profile: dict[str, Any],
+) -> None:
+    if channel not in short_channels:
+        return
+    answer = str(run.get("answer") or "")
+    if not answer:
+        return
+    thresholds = dict(profile.get("thresholds") or {})
+    density_profile = profile.get("answer_density") or {}
+    if not isinstance(density_profile, dict):
+        density_profile = {}
+    table_rows = sum(1 for line in answer.splitlines() if line.strip().startswith("|"))
+    caveat_words = [str(word) for word in density_profile.get("caveat_words") or []]
+    followup_words = [str(word) for word in density_profile.get("followup_words") or []]
+    caveat_count = sum(answer.count(word) for word in caveat_words)
+    followup_count = sum(answer.count(word) for word in followup_words)
+    if (
+        table_rows >= int(thresholds.get("low_density_table_rows") or 6)
+        or caveat_count >= int(thresholds.get("low_density_caveat_count") or 3)
+        or followup_count >= int(thresholds.get("low_density_followup_count") or 2)
+    ):
+        findings.append(
+            DiagnosisFinding(
+                code="low_density_answer_section",
+                severity="medium",
+                message="The final answer contains sections that are likely too low-density for a short-message channel.",
+                evidence={
+                    "channel": channel,
+                    "table_rows": table_rows,
+                    "caveat_count": caveat_count,
+                    "followup_count": followup_count,
+                    "answer_tokens": int(run.get("answer_tokens") or 0),
+                },
+                recommendation="For short-message channels, keep the default answer to conclusion, cause, action, and risk; move tables and extended evidence into an artifact.",
+                owner_area="channel",
+                impact="Low-density sections make chat answers hard to scan even when the total token count is near budget.",
+            )
+        )
+
+
+def _looks_raw_payload(call: dict[str, Any], *, profile: dict[str, Any]) -> bool:
     metadata = call.get("metadata") or {}
     mode = str(metadata.get("mode") or metadata.get("detail_level") or "").lower()
     if mode in {"full", "raw", "debug"}:
@@ -433,7 +684,9 @@ def _looks_raw_payload(call: dict[str, Any]) -> bool:
     record_count = metadata.get("record_count")
     if record_count is not None:
         try:
-            return int(record_count) >= 50
+            thresholds = profile.get("thresholds") or {}
+            threshold = int(thresholds.get("raw_payload_record_count") or 50)
+            return int(record_count) >= threshold
         except (TypeError, ValueError):
             return False
     return False
@@ -485,6 +738,50 @@ def _top_token_consumers(run: dict[str, Any], limit: int = 8) -> list[dict[str, 
     return consumers[:limit]
 
 
+def _top_latency_consumers(run: dict[str, Any], limit: int = 8) -> list[dict[str, Any]]:
+    consumers: list[dict[str, Any]] = []
+    for call in run.get("tool_calls") or []:
+        consumers.append(
+            {
+                "kind": "tool",
+                "name": call.get("name") or "unnamed",
+                "latency_ms": int(call.get("latency_ms") or 0),
+            }
+        )
+    for index, call in enumerate(run.get("model_calls") or []):
+        model = call.get("model") or f"model_call_{index}"
+        consumers.append(
+            {
+                "kind": "model",
+                "name": model,
+                "latency_ms": int(call.get("latency_ms") or 0),
+            }
+        )
+    consumers.sort(key=lambda item: int(item["latency_ms"]), reverse=True)
+    return [item for item in consumers[:limit] if int(item["latency_ms"]) > 0]
+
+
+def _root_causes(findings: list[DiagnosisFinding], limit: int = 5) -> list[dict[str, Any]]:
+    priority = {
+        "react_loop_token_amplification": 0,
+        "oversized_repeated_context_item": 1,
+        "expensive_low_value_tool_call": 2,
+        "tool_success_mismatch": 3,
+        "task_route_mismatch": 4,
+        "low_density_answer_section": 5,
+    }
+    ranked = [finding for finding in findings if finding.code in priority]
+    ranked.sort(key=lambda finding: (priority[finding.code], finding.code))
+    return [
+        {
+            "code": finding.code,
+            "owner_area": finding.owner_area,
+            "message": finding.message,
+        }
+        for finding in ranked[:limit]
+    ]
+
+
 def _score_dimensions(
     *,
     findings: list[DiagnosisFinding],
@@ -503,18 +800,25 @@ def _score_dimensions(
     }
     code_to_dimension = {
         "input_budget_exceeded": "cost_efficiency",
-        "tool_output_too_large": "context_precision",
+        "oversized_tool_output": "context_precision",
         "dominant_tool_output": "context_precision",
-        "raw_tool_payload": "context_precision",
-        "context_item_too_large": "context_precision",
-        "history_context_waste": "context_precision",
+        "raw_payload_in_default_path": "context_precision",
+        "oversized_context_item": "context_precision",
+        "oversized_repeated_context_item": "context_precision",
+        "react_loop_token_amplification": "context_precision",
+        "history_context_pollution": "context_precision",
+        "expensive_low_value_tool_call": "latency_efficiency",
+        "missing_fallback_for_slow_tool": "latency_efficiency",
         "output_budget_exceeded": "output_density",
-        "answer_too_long_for_channel": "output_density",
+        "channel_output_over_budget": "output_density",
+        "low_density_answer_section": "output_density",
         "latency_budget_exceeded": "latency_efficiency",
-        "wrong_route_for_task": "task_fit",
-        "overpowered_model_for_quick_task": "task_fit",
-        "missing_required_quality_field": "quality_risk",
-        "quality_fields_not_verified": "quality_risk",
+        "deep_route_for_short_task": "task_fit",
+        "task_route_mismatch": "task_fit",
+        "strong_model_for_simple_task": "task_fit",
+        "tool_success_mismatch": "quality_risk",
+        "required_field_missing": "quality_risk",
+        "quality_regression_risk": "quality_risk",
         "missing_source_attribution": "quality_risk",
         "user_correction_signal": "quality_risk",
     }

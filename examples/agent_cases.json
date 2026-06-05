@@ -1,0 +1,14 @@
+[
+  {
+    "id": "quick_question_basic",
+    "input": "Summarize the current status.",
+    "task_type": "quick_question",
+    "expected_required_fields": ["answer", "next_action"],
+    "max_output_tokens": 1200,
+    "run": {
+      "task_type": "quick_question",
+      "answer": "Current status is stable. Next action: continue monitoring.",
+      "answer_tokens": 12
+    }
+  }
+]

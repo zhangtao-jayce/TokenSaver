@@ -50,6 +50,20 @@ def generate_run_summary(
             lines.append(
                 f"- {item.get('kind')}: {item.get('name')} ({item.get('tokens', 0)} tokens)"
             )
+    latency_consumers = diagnosis.get("top_latency_consumers") or []
+    if latency_consumers:
+        lines.extend(["", "## Top Latency Consumers"])
+        for item in latency_consumers:
+            lines.append(
+                f"- {item.get('kind')}: {item.get('name')} ({item.get('latency_ms', 0)}ms)"
+            )
+    root_causes = diagnosis.get("root_causes") or []
+    if root_causes:
+        lines.extend(["", "## Root Causes"])
+        for item in root_causes:
+            lines.append(
+                f"- {item.get('code')} ({item.get('owner_area')}): {item.get('message')}"
+            )
     findings = diagnosis.get("findings") or []
     if findings:
         lines.extend(["", "## Findings"])
@@ -74,7 +88,7 @@ def generate_repair_brief(
     channel = run.get("channel") or "runtime"
     task_type = run.get("task_type") or "unknown"
     route = run.get("route") or "unknown"
-    required_fields = list(run.get("quality_requirements") or [])
+    required_fields = list(run.get("quality_requirements") or diagnosis.get("quality_guardrail_fields") or [])
 
     lines = [
         f"# TokenSaver Repair Brief",
@@ -99,6 +113,22 @@ def generate_repair_brief(
         for item in consumers[:5]:
             lines.append(
                 f"- {item.get('kind')}: {item.get('name')} used {item.get('tokens', 0)} tokens"
+            )
+    latency_consumers = diagnosis.get("top_latency_consumers") or []
+    if latency_consumers:
+        if not consumers:
+            lines.extend(["", "## Evidence"])
+        for item in latency_consumers[:5]:
+            lines.append(
+                f"- {item.get('kind')}: {item.get('name')} took {item.get('latency_ms', 0)}ms"
+            )
+
+    root_causes = diagnosis.get("root_causes") or []
+    if root_causes:
+        lines.extend(["", "## Root Causes"])
+        for item in root_causes:
+            lines.append(
+                f"- {item.get('code')} ({item.get('owner_area')}): {item.get('message')}"
             )
 
     if findings:

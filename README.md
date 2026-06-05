@@ -141,6 +141,15 @@ python3 -m tokensaver.cli latest --kind brief
 python3 -m tokensaver.cli latest --kind panel
 ```
 
+Open `.tokensaver/panel/index.html` in a browser to read the local ROI report. The panel is a static offline HTML file with:
+
+- latest run status, risk state, and ROI score
+- input/output token, latency, model call, and tool call overview
+- top context, tool, model, answer, and latency waste
+- findings with evidence, impact, and recommendation
+- repair brief preview with a copy button
+- recent run list and simple local trend summary
+
 ## Core Features
 
 - Local Agent runtime tracing and JSONL storage.
@@ -148,7 +157,7 @@ python3 -m tokensaver.cli latest --kind panel
 - Profile-driven ROI diagnosis for task/channel/route budget, context precision, tool output size, repeated tools, model choice, latency, and quality guardrails.
 - Top token consumer analysis and before/after run comparison.
 - Repair brief generation for coding agents.
-- Local activity panel.
+- Local static ROI panel with repair brief copy CTA.
 - Install and upgrade diagnostics: `version --verbose`, `doctor`, `verify-install`, `upgrade-command`.
 - Dependency-free MCP stdio server.
 

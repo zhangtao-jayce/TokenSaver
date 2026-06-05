@@ -1,6 +1,6 @@
 # Version Management
 
-Current version: `0.5.0`
+Current version: `0.5.1`
 
 Release date: 2026-06-03
 
@@ -33,6 +33,40 @@ Each release should record:
 - known limitations
 
 ## Current Release
+
+### 0.5.1
+
+Release date: 2026-06-05
+
+Release goal:
+
+Make TokenSaver's local GUI immediately communicate run ROI, waste, risk, and next repair actions.
+
+Iteration summary:
+
+TokenSaver `0.5.1` upgrades `.tokensaver/panel/index.html` from a basic activity panel into an offline local ROI health report. The panel now emphasizes the latest run status, cost overview, risk state, Top Waste, findings with evidence, a repair brief copy CTA, and recent run trends.
+
+Verification:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli record-run --file examples/run.json --store-dir /private/tmp/tokensaver-gui
+python3 -m tokensaver.cli latest --store-dir /private/tmp/tokensaver-gui --kind panel
+```
+
+Expected result:
+
+```text
+Ran 36 tests
+OK
+```
+
+Compatibility notes:
+
+- Existing traces remain readable.
+- The GUI remains a static local HTML file.
+- No network, login, database, or chart dependency is required.
 
 ### 0.5.0
 

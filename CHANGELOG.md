@@ -2,6 +2,71 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.5.1 - 2026-06-05
+
+### Release Goal
+
+Make the local GUI useful to ordinary users before they read JSONL or Markdown artifacts.
+
+### Iteration Summary
+
+This release follows the GUI-priority iteration guide. The generated `.tokensaver/panel/index.html` is now a static local ROI health report focused on whether the latest run was wasteful, where the waste came from, how severe it is, and what to repair next.
+
+### Added
+
+- Local ROI report layout for `.tokensaver/panel/index.html`.
+- Risk state labels:
+  - `Healthy`
+  - `Optimizable`
+  - `High Cost`
+  - `Quality Risk`
+- Cost overview cards:
+  - input tokens
+  - output tokens
+  - latency
+  - model calls
+  - tool calls
+- Top Waste section:
+  - largest context item
+  - largest tool output
+  - largest model input
+  - longest answer
+  - slowest tool
+- Finding cards with severity, code, evidence, recommendation, and impact.
+- Repair brief preview with `Copy Full Brief` button.
+- Recent runs table with simple local trend summary.
+- Panel GUI test coverage.
+
+### Changed
+
+- The panel now reads like a local health report instead of a plain activity table.
+- README and integration guide now document the offline GUI modules.
+
+### Verification
+
+Commands:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli record-run --file examples/run.json --store-dir /private/tmp/tokensaver-gui
+python3 -m tokensaver.cli latest --store-dir /private/tmp/tokensaver-gui --kind panel
+```
+
+Test result:
+
+```text
+Ran 36 tests
+OK
+```
+
+### Compatibility Notes
+
+- Python `>=3.10`.
+- No runtime third-party Python dependency is required.
+- Existing traces remain readable.
+- The GUI remains a local static HTML artifact and does not upload trace data.
+
 ## 0.5.0 - 2026-06-05
 
 ### Release Goal

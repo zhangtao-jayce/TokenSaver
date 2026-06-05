@@ -95,51 +95,270 @@ class LocalStore:
         update_info: dict[str, Any] | None = None,
     ) -> str:
         runs = self.load_runs(limit=20)
-        rows = "\n".join(_run_row(run) for run in reversed(runs))
         diagnosis = latest.get("diagnosis") or {}
-        findings = "".join(
-            f"<li><strong>{_esc(str(item.get('code')))}</strong>: {_esc(str(item.get('message')))}</li>"
-            for item in diagnosis.get("findings") or []
-        )
-        consumers = "".join(
-            f"<li><strong>{_esc(str(item.get('kind')))}</strong> {_esc(str(item.get('name')))}: {_esc(str(item.get('tokens')))} tokens</li>"
-            for item in diagnosis.get("top_token_consumers") or []
+        findings = list(diagnosis.get("findings") or [])
+        brief = generate_repair_brief(latest, update_info=update_info)
+        roi_score = int(diagnosis.get("roi_score") or 100)
+        status = str(diagnosis.get("status") or "ok")
+        risk = _risk_state(latest)
+        update_notice = _render_update_notice(update_info)
+        rows = "\n".join(_run_row(run) for run in reversed(runs))
+        top_waste = "".join(_top_waste_item(item) for item in _top_waste(latest))
+        finding_cards = "".join(_finding_card(item) for item in findings[:8])
+        recommendations = "".join(
+            f"<li>{_esc(text)}</li>" for text in _top_recommendations(findings, limit=5)
         )
         dimensions = "".join(
-            f"<li><strong>{_esc(str(name))}</strong>: {_esc(str(score))}</li>"
+            f'<div class="dimension"><span>{_esc(str(name))}</span><strong>{_esc(str(score))}</strong></div>'
             for name, score in (diagnosis.get("dimensions") or {}).items()
         )
-        update_notice = _render_update_notice(update_info)
+        trend = _trend_summary(runs)
         return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>TokenSaver Activity Panel</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TokenSaver Local ROI Report</title>
   <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 32px; color: #1f2937; }}
-    table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
-    th, td {{ border-bottom: 1px solid #e5e7eb; padding: 8px; text-align: left; }}
-    .score {{ font-size: 40px; font-weight: 700; }}
-    .muted {{ color: #6b7280; }}
+    :root {{
+      color-scheme: light;
+      --ink: #18212f;
+      --muted: #657084;
+      --line: #d8dee8;
+      --surface: #ffffff;
+      --soft: #f6f8fb;
+      --good: #16794a;
+      --warn: #a05a00;
+      --bad: #b42318;
+      --blue: #2457a6;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: var(--soft);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }}
+    main {{ max-width: 1180px; margin: 0 auto; padding: 28px; }}
+    header {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 20px;
+      align-items: end;
+      padding: 10px 0 22px;
+      border-bottom: 1px solid var(--line);
+    }}
+    h1 {{ margin: 0 0 8px; font-size: 30px; line-height: 1.1; letter-spacing: 0; }}
+    h2 {{ margin: 0 0 14px; font-size: 19px; letter-spacing: 0; }}
+    h3 {{ margin: 0 0 6px; font-size: 15px; letter-spacing: 0; }}
+    p {{ margin: 0; }}
+    button {{
+      border: 1px solid #173f7a;
+      background: var(--blue);
+      color: white;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font: inherit;
+      cursor: pointer;
+    }}
+    button:focus {{ outline: 3px solid #b9d2ff; outline-offset: 2px; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border-bottom: 1px solid var(--line); padding: 9px 8px; text-align: left; vertical-align: top; }}
+    th {{ color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }}
+    textarea {{
+      width: 100%;
+      min-height: 220px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--ink);
+      background: #fbfcfe;
+      resize: vertical;
+    }}
+    .muted {{ color: var(--muted); }}
+    .local {{ color: var(--good); font-weight: 700; }}
+    .grid {{ display: grid; gap: 16px; }}
+    .two {{ grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr); }}
+    .metrics {{ grid-template-columns: repeat(5, minmax(130px, 1fr)); }}
+    .section {{
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      margin-top: 18px;
+    }}
+    .hero {{
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 18px;
+      align-items: center;
+    }}
+    .score {{
+      width: 132px;
+      height: 132px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      border: 10px solid #c9ddff;
+      background: #f8fbff;
+      color: var(--blue);
+      font-size: 40px;
+      font-weight: 800;
+    }}
+    .badge {{
+      display: inline-block;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-right: 6px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+    }}
+    .risk-ok {{ color: var(--good); border-color: #a9d6be; background: #f2fbf6; }}
+    .risk-optimize {{ color: var(--warn); border-color: #e4c27f; background: #fff8e8; }}
+    .risk-high {{ color: var(--bad); border-color: #f2afa8; background: #fff3f1; }}
+    .metric {{
+      border-left: 4px solid #88a9db;
+      padding: 10px 10px 10px 12px;
+      background: #fbfcfe;
+      min-width: 0;
+    }}
+    .metric span, .dimension span {{ display: block; color: var(--muted); font-size: 12px; }}
+    .metric strong {{ display: block; margin-top: 2px; font-size: 23px; overflow-wrap: anywhere; }}
+    .dimension {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+      padding: 8px 0;
+    }}
+    .waste, .finding {{
+      border: 1px solid var(--line);
+      border-left-width: 4px;
+      border-radius: 6px;
+      padding: 12px;
+      margin-top: 10px;
+      background: #fbfcfe;
+    }}
+    .waste {{ border-left-color: #7a8ca6; }}
+    .finding.low {{ border-left-color: #6aa57a; }}
+    .finding.medium {{ border-left-color: #d0973e; }}
+    .finding.high {{ border-left-color: #c4554d; }}
+    .finding.critical {{ border-left-color: #8f1f17; }}
+    .finding code {{ font-size: 12px; color: #334155; }}
+    .finding dl {{ margin: 8px 0 0; }}
+    .finding dt {{ color: var(--muted); font-size: 12px; font-weight: 700; }}
+    .finding dd {{ margin: 2px 0 8px; }}
+    .brief-actions {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }}
+    .copy-status {{ color: var(--good); min-height: 1.4em; }}
+    @media (max-width: 860px) {{
+      main {{ padding: 18px; }}
+      header, .two, .hero {{ grid-template-columns: 1fr; }}
+      .metrics {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .score {{ width: 112px; height: 112px; font-size: 34px; }}
+    }}
+    @media (max-width: 520px) {{
+      .metrics {{ grid-template-columns: 1fr; }}
+      th, td {{ padding: 8px 4px; font-size: 13px; }}
+    }}
   </style>
 </head>
 <body>
-  <h1>TokenSaver Activity Panel</h1>
-  <p class="muted">Local-only summary generated from the latest Agent run.</p>
-  {update_notice}
-  <div class="score">{_esc(str(diagnosis.get("roi_score", 100)))}</div>
-  <p>{_esc(str(latest.get("app", "")))} / {_esc(str(latest.get("channel", "")))} / {_esc(str(latest.get("task_type", "")))}</p>
-  <h2>ROI Dimensions</h2>
-  <ul>{dimensions or "<li>No dimension scores available.</li>"}</ul>
-  <h2>Top Token Consumers</h2>
-  <ul>{consumers or "<li>No token consumers recorded.</li>"}</ul>
-  <h2>Latest Findings</h2>
-  <ul>{findings or "<li>No low-ROI pattern detected.</li>"}</ul>
-  <h2>Recent Runs</h2>
-  <table>
-    <thead><tr><th>App</th><th>Task</th><th>Route</th><th>Input</th><th>Output</th><th>ROI</th><th>Status</th></tr></thead>
-    <tbody>{rows}</tbody>
-  </table>
+  <main>
+    <header>
+      <div>
+        <h1>TokenSaver Local ROI Report</h1>
+        <p class="muted">A local health report for the latest Agent run. <span class="local">All data stays local.</span></p>
+      </div>
+      <div>
+        <span class="badge {_esc(risk['class'])}">{_esc(risk['label'])}</span>
+        <span class="badge">{_esc(status)}</span>
+      </div>
+    </header>
+    {update_notice}
+
+    <section class="section hero">
+      <div class="score">{_esc(str(roi_score))}</div>
+      <div>
+        <h2>Latest Run</h2>
+        <p>
+          <strong>{_esc(str(latest.get("app", "")))}</strong>
+          <span class="muted"> / {_esc(str(latest.get("channel", "")))} / {_esc(str(latest.get("task_type", "")))} / {_esc(str(latest.get("route", "")))}</span>
+        </p>
+        <p class="muted" style="margin-top:8px;">{_esc(risk['explanation'])}</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Cost Overview</h2>
+      <div class="grid metrics">
+        {_metric("Input Tokens", latest.get("input_tokens", 0))}
+        {_metric("Output Tokens", latest.get("output_tokens", 0))}
+        {_metric("Latency", f"{int(latest.get('latency_ms') or 0)}ms")}
+        {_metric("Model Calls", len(latest.get("model_calls") or []))}
+        {_metric("Tool Calls", len(latest.get("tool_calls") or []))}
+      </div>
+    </section>
+
+    <div class="grid two">
+      <section class="section">
+        <h2>Top Waste</h2>
+        {top_waste or '<p class="muted">No obvious token or latency waste recorded.</p>'}
+      </section>
+      <section class="section">
+        <h2>ROI Dimensions</h2>
+        {dimensions or '<p class="muted">No dimension scores available.</p>'}
+      </section>
+    </div>
+
+    <section class="section">
+      <h2>Findings</h2>
+      {finding_cards or '<p class="muted">No low-ROI pattern detected by the current local rules.</p>'}
+    </section>
+
+    <section class="section">
+      <h2>Repair Brief</h2>
+      <div class="brief-actions">
+        <button type="button" onclick="copyBrief()">Copy Full Brief</button>
+        <span class="copy-status" id="copyStatus"></span>
+        <span class="muted">Open latest brief at <code>briefs/latest.md</code></span>
+      </div>
+      <h3>Most Important Next Steps</h3>
+      <ol>{recommendations or '<li>Keep the current design unless new evidence appears.</li>'}</ol>
+      <textarea id="briefText" readonly>{_esc(brief)}</textarea>
+    </section>
+
+    <section class="section">
+      <h2>Recent Runs</h2>
+      <p class="muted">{_esc(trend)}</p>
+      <table>
+        <thead><tr><th>App</th><th>Time</th><th>Task</th><th>Route</th><th>Input</th><th>Latency</th><th>ROI</th><th>Status</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </section>
+  </main>
+  <script>
+    function copyBrief() {{
+      var text = document.getElementById('briefText');
+      text.focus();
+      text.select();
+      var done = function() {{
+        document.getElementById('copyStatus').textContent = 'Brief copied';
+      }};
+      if (navigator.clipboard && window.isSecureContext) {{
+        navigator.clipboard.writeText(text.value).then(done).catch(function() {{
+          document.execCommand('copy');
+          done();
+        }});
+      }} else {{
+        document.execCommand('copy');
+        done();
+      }}
+    }}
+  </script>
 </body>
 </html>
 """
@@ -150,14 +369,179 @@ def _run_row(run: dict[str, Any]) -> str:
     return (
         "<tr>"
         f"<td>{_esc(str(run.get('app', '')))}</td>"
+        f"<td>{_esc(_format_time(run.get('started_at') or run.get('ended_at')))}</td>"
         f"<td>{_esc(str(run.get('task_type', '')))}</td>"
         f"<td>{_esc(str(run.get('route', '')))}</td>"
         f"<td>{_esc(str(run.get('input_tokens', 0)))}</td>"
-        f"<td>{_esc(str(run.get('output_tokens', 0)))}</td>"
+        f"<td>{_esc(str(run.get('latency_ms', 0)))}ms</td>"
         f"<td>{_esc(str(diagnosis.get('roi_score', 100)))}</td>"
         f"<td>{_esc(str(diagnosis.get('status', 'ok')))}</td>"
         "</tr>"
     )
+
+
+def _metric(label: str, value: Any) -> str:
+    return (
+        '<div class="metric">'
+        f"<span>{_esc(label)}</span>"
+        f"<strong>{_esc(str(value))}</strong>"
+        "</div>"
+    )
+
+
+def _risk_state(run: dict[str, Any]) -> dict[str, str]:
+    diagnosis = run.get("diagnosis") or {}
+    findings = diagnosis.get("findings") or []
+    codes = set(diagnosis.get("finding_codes") or [])
+    severities = {str(item.get("severity") or "").lower() for item in findings if isinstance(item, dict)}
+    roi_score = int(diagnosis.get("roi_score") or 100)
+    quality_codes = {
+        "required_field_missing",
+        "quality_regression_risk",
+        "missing_source_for_sensitive_task",
+        "missing_human_review_for_high_risk_task",
+    }
+    if codes & quality_codes or "critical" in severities:
+        return {
+            "label": "Quality Risk",
+            "class": "risk-high",
+            "explanation": "This run may have quality or safety gaps. Keep guardrails before optimizing cost.",
+        }
+    if roi_score < 55 or "high" in severities:
+        return {
+            "label": "High Cost",
+            "class": "risk-high",
+            "explanation": "This run has high-severity waste or a low ROI score. Review Top Waste and copy the brief.",
+        }
+    if roi_score < 85 or findings:
+        return {
+            "label": "Optimizable",
+            "class": "risk-optimize",
+            "explanation": "This run works, but local rules found route, context, tool, model, or channel waste.",
+        }
+    return {
+        "label": "Healthy",
+        "class": "risk-ok",
+        "explanation": "No major low-ROI pattern was detected. Keep the current design unless new evidence appears.",
+    }
+
+
+def _top_waste(run: dict[str, Any]) -> list[dict[str, Any]]:
+    diagnosis = run.get("diagnosis") or {}
+    consumers = list(diagnosis.get("top_token_consumers") or [])
+    latency = list(diagnosis.get("top_latency_consumers") or [])
+    items: list[dict[str, Any]] = []
+    categories = [
+        ("Largest Context", lambda item: item.get("kind") == "context"),
+        ("Largest Tool Output", lambda item: item.get("kind") == "tool_output"),
+        ("Largest Model Input", lambda item: item.get("kind") == "model_input"),
+        ("Longest Answer", lambda item: item.get("kind") == "answer"),
+    ]
+    for label, predicate in categories:
+        match = next((item for item in consumers if predicate(item)), None)
+        if match:
+            items.append(
+                {
+                    "label": label,
+                    "name": match.get("name"),
+                    "value": f"{int(match.get('tokens') or 0)} tokens",
+                }
+            )
+    slow_tool = next((item for item in latency if item.get("kind") == "tool"), None)
+    if slow_tool:
+        items.append(
+            {
+                "label": "Slowest Tool",
+                "name": slow_tool.get("name"),
+                "value": f"{int(slow_tool.get('latency_ms') or 0)}ms",
+            }
+        )
+    return items[:5]
+
+
+def _top_waste_item(item: dict[str, Any]) -> str:
+    return (
+        '<div class="waste">'
+        f"<h3>{_esc(str(item.get('label', 'Waste')))}</h3>"
+        f"<p><strong>{_esc(str(item.get('name', 'unknown')))}</strong></p>"
+        f"<p class=\"muted\">{_esc(str(item.get('value', '')))}</p>"
+        "</div>"
+    )
+
+
+def _finding_card(finding: dict[str, Any]) -> str:
+    severity = str(finding.get("severity") or "low").lower()
+    evidence = finding.get("evidence") or {}
+    evidence_text = _inline_evidence(evidence) if isinstance(evidence, dict) else str(evidence)
+    return (
+        f'<article class="finding {_esc(severity)}">'
+        f"<h3>{_esc(str(finding.get('message') or 'Finding'))}</h3>"
+        f"<p><span class=\"badge\">{_esc(severity)}</span> <code>{_esc(str(finding.get('code') or ''))}</code></p>"
+        "<dl>"
+        f"<dt>Evidence</dt><dd>{_esc(evidence_text or 'No structured evidence recorded.')}</dd>"
+        f"<dt>Recommendation</dt><dd>{_esc(str(finding.get('recommendation') or 'Review this workflow.'))}</dd>"
+        f"<dt>Impact</dt><dd>{_esc(str(finding.get('impact') or 'May reduce Agent ROI.'))}</dd>"
+        "</dl>"
+        "</article>"
+    )
+
+
+def _top_recommendations(findings: list[dict[str, Any]], *, limit: int) -> list[str]:
+    seen: set[str] = set()
+    recommendations: list[str] = []
+    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    sorted_findings = sorted(
+        findings,
+        key=lambda item: severity_rank.get(str(item.get("severity") or "").lower(), 9),
+    )
+    for finding in sorted_findings:
+        recommendation = str(finding.get("recommendation") or "").strip()
+        if not recommendation or recommendation in seen:
+            continue
+        seen.add(recommendation)
+        recommendations.append(recommendation)
+        if len(recommendations) >= limit:
+            break
+    return recommendations
+
+
+def _trend_summary(runs: list[dict[str, Any]]) -> str:
+    if not runs:
+        return "No recent runs recorded yet."
+    count = len(runs)
+    avg_input = round(sum(int(run.get("input_tokens") or 0) for run in runs) / count)
+    avg_latency = round(sum(int(run.get("latency_ms") or 0) for run in runs) / count)
+    common = _most_common_codes(runs, limit=3)
+    suffix = f" Most common findings: {', '.join(common)}." if common else ""
+    return f"Last {count} runs average {avg_input} input tokens and {avg_latency}ms latency.{suffix}"
+
+
+def _most_common_codes(runs: list[dict[str, Any]], *, limit: int) -> list[str]:
+    counts: dict[str, int] = {}
+    for run in runs:
+        codes = (run.get("diagnosis") or {}).get("finding_codes") or []
+        for code in codes:
+            normalized = normalize_finding_code(str(code))
+            counts[normalized] = counts.get(normalized, 0) + 1
+    return [
+        code
+        for code, _count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
+
+
+def _inline_evidence(value: dict[str, Any]) -> str:
+    return ", ".join(f"{key}={item}" for key, item in value.items())
+
+
+def _format_time(value: Any) -> str:
+    if not value:
+        return ""
+    try:
+        import datetime as _datetime
+
+        return _datetime.datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M")
+    except (OSError, OverflowError, TypeError, ValueError):
+        return str(value)
 
 
 def _esc(text: str) -> str:

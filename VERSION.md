@@ -1,6 +1,6 @@
 # Version Management
 
-Current version: `0.4.0`
+Current version: `0.5.0`
 
 Release date: 2026-06-03
 
@@ -33,6 +33,48 @@ Each release should record:
 - known limitations
 
 ## Current Release
+
+### 0.5.0
+
+Release date: 2026-06-05
+
+Release goal:
+
+Make TokenSaver easier to integrate into real Agent applications in under 10 minutes.
+
+Iteration summary:
+
+TokenSaver `0.5.0` adds dependency-free integration helpers for OpenAI, Anthropic, LiteLLM, and LangChain/LangGraph-style callbacks. It also documents the standard Agent run fields and the TypeScript/Vercel AI SDK JSON import path.
+
+Verification:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli init-profile --template coding-agent --output /private/tmp/tokensaver-profile.yaml --force
+python3 -m tokensaver.cli record-run --file examples/run.json --store-dir /private/tmp/tokensaver-v05
+python3 -m tokensaver.cli latest --store-dir /private/tmp/tokensaver-v05 --kind summary
+python3 -m tokensaver.cli latest --store-dir /private/tmp/tokensaver-v05 --kind brief
+python3 -m tokensaver.cli latest --store-dir /private/tmp/tokensaver-v05 --kind panel
+```
+
+Expected result:
+
+```text
+Ran 35 tests
+OK
+```
+
+Compatibility notes:
+
+- Existing traces remain readable.
+- Core package remains dependency-free.
+- New integration helpers accept SDK-compatible client objects without importing those SDKs.
+
+Known limitations:
+
+- Vercel AI SDK support is via documented JSON import shape, not a native npm package.
+- LangChain/LangGraph support is a lightweight callback adapter, not a full framework integration package.
 
 ### 0.4.0
 

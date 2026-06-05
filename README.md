@@ -75,7 +75,7 @@ Requirements:
 
 ```python
 from tokensaver import TokenSaver
-from tokensaver.integrations import trace_llm_call
+from tokensaver.integrations import trace_openai_chat_completion
 
 tokensaver = TokenSaver(app="my-agent", channel="slack")
 
@@ -86,15 +86,39 @@ def handle_message(message: str) -> str:
         run.set_quality_requirements(["source", "as_of_time"])
         run.add_context("price", "market context ...", kind="market_data")
 
-        prompt = f"Answer: {message}"
-        answer = trace_llm_call(
+        response = trace_openai_chat_completion(
             run,
-            model="anthropic/claude-sonnet-4-6",
-            input_text=prompt,
-            call=lambda: call_llm(prompt),
+            client=openai_client,
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": message}],
         )
+        answer = response.choices[0].message.content
         run.record_final_answer(answer)
         return answer
+```
+
+## Integration Helpers
+
+TokenSaver core stays dependency-free, but `tokensaver.integrations` includes adapters for common Agent stacks:
+
+- `trace_openai_chat_completion(...)`
+- `trace_openai_response(...)`
+- `trace_anthropic_message(...)`
+- `trace_litellm_completion(...)`
+- `LangChainTokenSaverCallback`
+- `TokenSaverCallback`
+
+Standard Agent run fields:
+
+```text
+app, channel, user_message, task_type, route,
+context_items, tool_calls, model_calls, answer, quality_signals
+```
+
+TypeScript or Vercel AI SDK projects can import runs by writing the same JSON shape and calling:
+
+```bash
+python3 -m tokensaver.cli record-run --file run.json --profile .tokensaver/profile.yaml
 ```
 
 ## Outputs
@@ -120,6 +144,7 @@ python3 -m tokensaver.cli latest --kind panel
 ## Core Features
 
 - Local Agent runtime tracing and JSONL storage.
+- Dependency-free OpenAI, Anthropic, LiteLLM, and LangChain/LangGraph integration helpers.
 - Profile-driven ROI diagnosis for task/channel/route budget, context precision, tool output size, repeated tools, model choice, latency, and quality guardrails.
 - Top token consumer analysis and before/after run comparison.
 - Repair brief generation for coding agents.

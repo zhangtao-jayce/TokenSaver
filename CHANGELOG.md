@@ -2,6 +2,74 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.5.0 - 2026-06-05
+
+### Release Goal
+
+Make real Agent application integration faster and more explicit.
+
+### Iteration Summary
+
+This release implements the v0.5 integration experience from the iteration guide. TokenSaver now ships dependency-free helpers for common SDK and framework shapes while keeping local-first tracing and JSONL artifacts unchanged.
+
+### Added
+
+- Standard Agent run field contract:
+  - `app`
+  - `channel`
+  - `user_message`
+  - `task_type`
+  - `route`
+  - `context_items`
+  - `tool_calls`
+  - `model_calls`
+  - `answer`
+  - `quality_signals`
+- OpenAI helpers:
+  - `trace_openai_chat_completion`
+  - `trace_openai_response`
+- Anthropic helper:
+  - `trace_anthropic_message`
+- LiteLLM helper:
+  - `trace_litellm_completion`
+- LangChain/LangGraph-style callback adapter:
+  - `LangChainTokenSaverCallback`
+- Vercel AI SDK / TypeScript JSON import documentation.
+- Integration helper tests with fake SDK clients.
+
+### Changed
+
+- README minimal API now uses the OpenAI chat helper as the primary integration example.
+- Integration guide now includes concrete OpenAI, Anthropic, LiteLLM, LangChain/LangGraph, and TypeScript JSON import examples.
+
+### Verification
+
+Commands:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli init-profile --template coding-agent --output /private/tmp/tokensaver-profile.yaml --force
+python3 -m tokensaver.cli record-run --file examples/run.json --store-dir /private/tmp/tokensaver-v05
+python3 -m tokensaver.cli latest --store-dir /private/tmp/tokensaver-v05 --kind summary
+python3 -m tokensaver.cli latest --store-dir /private/tmp/tokensaver-v05 --kind brief
+python3 -m tokensaver.cli latest --store-dir /private/tmp/tokensaver-v05 --kind panel
+```
+
+Test result:
+
+```text
+Ran 35 tests
+OK
+```
+
+### Compatibility Notes
+
+- Python `>=3.10`.
+- No runtime third-party Python dependency is required by the core package.
+- Existing traces remain readable.
+- New SDK helpers return the original provider response object.
+
 ## 0.4.0 - 2026-06-03
 
 ### Release Goal

@@ -24,24 +24,24 @@ jobs:
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${REPOSITORY}")"
-          views="$(curl --fail --silent --show-error \
+          views="$(curl --silent --show-error \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPOSITORY}/traffic/views")"
-          clones="$(curl --fail --silent --show-error \
+            "https://api.github.com/repos/${REPOSITORY}/traffic/views" || true)"
+          clones="$(curl --silent --show-error \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPOSITORY}/traffic/clones")"
-          referrers="$(curl --fail --silent --show-error \
+            "https://api.github.com/repos/${REPOSITORY}/traffic/clones" || true)"
+          referrers="$(curl --silent --show-error \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${REPOSITORY}/traffic/popular/referrers")"
+            "https://api.github.com/repos/${REPOSITORY}/traffic/popular/referrers" || true)"
           jq -n \
             --arg captured_at "$date_utc" \
             --argjson repo "$repo" \
-            --argjson views "$views" \
-            --argjson clones "$clones" \
-            --argjson referrers "$referrers" \
+            --argjson views "$(echo "$views" | jq 'if has("count") then . else {} end')" \
+            --argjson clones "$(echo "$clones" | jq 'if has("count") then . else {} end')" \
+            --argjson referrers "$(echo "$referrers" | jq 'if type == "array" then . else [] end')" \
             '{
               captured_at: $captured_at,
               stars: $repo.stargazers_count,
@@ -52,7 +52,13 @@ jobs:
               unique_visitors_14d: $views.uniques,
               clones_14d: $clones.count,
               unique_cloners_14d: $clones.uniques,
-              top_referrers: $referrers
+              top_referrers: $referrers,
+              traffic_note: (
+                if ($views | has("count")) and ($clones | has("count"))
+                then "GitHub traffic API available."
+                else "GitHub Actions token could not access traffic API; configure a repository traffic token to populate these fields."
+                end
+              )
             }' >> growth-data/github.jsonl
       - name: Commit snapshot
         run: |

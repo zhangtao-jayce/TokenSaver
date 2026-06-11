@@ -1,0 +1,32 @@
+name: Share a case study
+description: Share measured before/after results from a real Agent workflow.
+title: "[Case study]: "
+labels: ["case-study"]
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Agent workflow
+      description: Describe the task, route, models, tools, and relevant constraints without private data.
+    validations:
+      required: true
+  - type: textarea
+    id: finding
+    attributes:
+      label: TokenSaver finding
+      description: Which finding codes or report evidence led to the repair?
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Before and after
+      description: Include input tokens, output tokens, latency, ROI score, and quality checks.
+    validations:
+      required: true
+  - type: checkboxes
+    id: publish
+    attributes:
+      label: Publication
+      options:
+        - label: This case study may be linked from TokenSaver documentation.

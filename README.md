@@ -1,90 +1,102 @@
 # TokenSaver
 
-TokenSaver is a local-first ROI diagnosis toolkit for AI Agent applications.
+[![CI](https://github.com/zhangtao-jayce/TokenSaver/actions/workflows/ci.yml/badge.svg)](https://github.com/zhangtao-jayce/TokenSaver/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB)](https://www.python.org/)
+[![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Local first](https://img.shields.io/badge/data-local--first-16794a)](#privacy-by-default)
+[![Demo input tokens](https://img.shields.io/badge/demo_input_tokens--92.4%25-16794a)](#see-it-in-30-seconds)
 
-It records real Agent runs, diagnoses token/context/tool/model/route waste with local rules, and generates repair briefs that coding agents can use to improve the host Agent application.
+**Find wasted context, tool calls, model calls, and workflow routes in AI agents, locally. Then generate a repair brief for Codex or Claude Code.**
 
-中文定位：TokenSaver 是面向 Agent 应用的本地运行期 ROI 诊断工具，帮助开发者发现 token、上下文、工具输出、模型选择和工作流 route 的低效问题，并生成可执行的优化 brief。
-
-TokenSaver does not upload prompts, traces, tool outputs, or user data by default. It does not call an LLM by default.
-
-## Quick Start
-
-Recommended installation inside an Agent project:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade \
-  git+https://github.com/zhangtao-jayce/TokenSaver.git
-```
-
-For macOS Homebrew Python temporary verification:
-
-```bash
-python3 -m pip install --user --break-system-packages --upgrade --force-reinstall \
-  git+https://github.com/zhangtao-jayce/TokenSaver.git
-```
-
-Verify the install:
-
-```bash
-python3 -m tokensaver.cli version --verbose
-python3 -m tokensaver.cli doctor
-```
-
-Create a project profile:
-
-```bash
-python3 -m tokensaver.cli init-profile --template coding-agent
-python3 -m tokensaver.cli doctor --profile .tokensaver/profile.yaml
-```
-
-If the `tokensaver` console script is not on `PATH`, use the stable module form:
-
-```bash
-python3 -m tokensaver.cli ...
-```
-
-## Let Your Coding Agent Integrate It
-
-Copy this into Codex / Claude Code inside your Agent app repository:
+TokenSaver records real Agent runs, diagnoses low-ROI patterns with deterministic local rules, and produces an offline report showing what to repair next.
 
 ```text
-Please integrate TokenSaver into this Agent application.
-
-Repository:
-https://github.com/zhangtao-jayce/TokenSaver
-
-Requirements:
-1. Find the main entrypoint where this Agent handles a user message.
-2. Install TokenSaver with python -m pip if needed.
-3. Add a TokenSaver runtime trace around each user-message run.
-4. Record app, channel, user_message, task_type, route, context_items, tool_calls, model_calls, final answer, and quality signals when available.
-5. Keep TokenSaver data local.
-6. Run a minimal demo/test message and confirm these files exist:
-   - .tokensaver/runs.jsonl
-   - .tokensaver/reports/latest.md
-   - .tokensaver/briefs/latest.md
-   - .tokensaver/panel/index.html
-7. Show the latest report and repair brief.
-8. Add or document a minimal command that proves trace generation works.
+Agent run -> Local trace -> ROI diagnosis -> Repair brief -> Before/after comparison
 ```
 
-## Minimal Python API
+No hosted account. No required LLM call. No prompt or trace upload by default.
+
+![TokenSaver demo changing a high-cost Agent run into a healthy run](docs/assets/tokensaver-demo.gif)
+
+## See It In 30 Seconds
+
+```bash
+uvx tokensaver-agent demo
+```
+
+The offline demo writes a before/after benchmark and local HTML panel to `.tokensaver-demo/`.
+
+Or install it:
+
+```bash
+python3 -m pip install tokensaver-agent
+tokensaver demo
+tokensaver open
+```
+
+```text
+Input tokens: 32540 -> 2460 (-92.4%)
+Output tokens: 7400 -> 580 (-92.2%)
+Latency: 31000 -> 1700 (-94.5%)
+ROI score: 35 -> 100 (+65)
+Result: ACCEPTED
+```
+
+These numbers come from the bundled deterministic demo fixture. They demonstrate the workflow and are not a claim about every Agent application.
+
+The generated `share-card.svg` can be attached to a PR, issue, release, or post without exposing prompts or tool payloads.
+
+## What It Finds
+
+TokenSaver currently detects patterns such as:
+
+- short requests routed through deep research workflows
+- oversized or repeated context
+- raw tool payloads and repeated uncached tool calls
+- excessive model input and ReAct loop amplification
+- slow tools, latency budget violations, and missing fallbacks
+- answers that are too long for the delivery channel
+- quality guardrail regressions during optimization
+
+It writes:
+
+```text
+.tokensaver/
+  runs.jsonl
+  reports/latest.md
+  briefs/latest.md
+  panel/index.html
+```
+
+## Integrate With A Coding Agent
+
+Paste this into Codex or Claude Code inside your Agent repository:
+
+```text
+Integrate TokenSaver into this Agent application:
+https://github.com/zhangtao-jayce/TokenSaver
+
+Find the user-message entrypoint, trace route/context/tool/model/final-answer
+data for each run, keep all data local, run one test request, and show:
+- .tokensaver/reports/latest.md
+- .tokensaver/briefs/latest.md
+- .tokensaver/panel/index.html
+```
+
+The detailed integration prompt and verification checklist are in [docs/集成指南.md](docs/集成指南.md).
+
+## Minimal Python Integration
 
 ```python
 from tokensaver import TokenSaver
 from tokensaver.integrations import trace_openai_chat_completion
 
-tokensaver = TokenSaver(app="my-agent", channel="slack")
+tokensaver = TokenSaver(app="my-agent", channel="chat")
 
 def handle_message(message: str) -> str:
     with tokensaver.run(user_message=message) as run:
-        run.set_task(task_type="quick_question", route="deep_research")
-        run.set_budget(input_tokens=8000, output_tokens=800, latency_ms=30000)
-        run.set_quality_requirements(["source", "as_of_time"])
-        run.add_context("price", "market context ...", kind="market_data")
+        run.set_task(task_type="quick_question", route="default")
+        run.add_context("ticket", load_ticket(message), kind="crm")
 
         response = trace_openai_chat_completion(
             run,
@@ -97,95 +109,74 @@ def handle_message(message: str) -> str:
         return answer
 ```
 
-## Integration Helpers
+Dependency-free adapters are included for:
 
-TokenSaver core stays dependency-free, but `tokensaver.integrations` includes adapters for common Agent stacks:
+- OpenAI Chat Completions and Responses
+- Anthropic Messages
+- LiteLLM
+- LangChain and LangGraph callbacks
+- framework-agnostic callbacks
+- TypeScript and Vercel AI SDK JSON imports
 
-- `trace_openai_chat_completion(...)`
-- `trace_openai_response(...)`
-- `trace_anthropic_message(...)`
-- `trace_litellm_completion(...)`
-- `LangChainTokenSaverCallback`
-- `TokenSaverCallback`
+## Compare A Repair
 
-Standard Agent run fields:
-
-```text
-app, channel, user_message, task_type, route,
-context_items, tool_calls, model_calls, answer, quality_signals
-```
-
-TypeScript or Vercel AI SDK projects can import runs by writing the same JSON shape and calling:
+After changing the Agent workflow, record an equivalent run and compare it:
 
 ```bash
-python3 -m tokensaver.cli record-run --file run.json --profile .tokensaver/profile.yaml
+tokensaver compare \
+  --before BEFORE_RUN_ID \
+  --after AFTER_RUN_ID
 ```
 
-## Outputs
+TokenSaver reports token, latency, ROI score, resolved findings, new findings, and quality blockers. An optimization is rejected when it introduces tracked quality regressions.
 
-After one run, TokenSaver writes:
-
-```text
-.tokensaver/
-  runs.jsonl
-  reports/latest.md
-  briefs/latest.md
-  panel/index.html
-```
-
-Read the latest artifacts:
+Generate a public Markdown report and anonymous SVG card directly from two run files:
 
 ```bash
-python3 -m tokensaver.cli latest --kind summary
-python3 -m tokensaver.cli latest --kind brief
-python3 -m tokensaver.cli latest --kind panel
+tokensaver benchmark \
+  --before-file before.json \
+  --after-file after.json \
+  --output-dir .tokensaver-benchmark
 ```
 
-Open `.tokensaver/panel/index.html` in a browser to read the local ROI report. The panel is a static offline HTML file with:
+Three deterministic cases are included:
 
-- latest run status, risk state, and ROI score
-- input/output token, latency, model call, and tool call overview
-- top context, tool, model, answer, and latency waste
-- findings with evidence, impact, and recommendation
-- repair brief preview with a copy button
-- recent run list and simple local trend summary
+- [LangGraph repeated tool calls](examples/case-studies/langgraph-repeated-tools)
+- [OpenAI coding agent context waste](examples/case-studies/openai-context-waste)
+- [RAG oversized retrieval payload](examples/case-studies/rag-oversized-retrieval)
 
-## Core Features
+See [examples/case-studies/README.md](examples/case-studies/README.md) for exact commands.
 
-- Local Agent runtime tracing and JSONL storage.
-- Dependency-free OpenAI, Anthropic, LiteLLM, and LangChain/LangGraph integration helpers.
-- Profile-driven ROI diagnosis for task/channel/route budget, context precision, tool output size, repeated tools, model choice, latency, and quality guardrails.
-- Top token consumer analysis and before/after run comparison.
-- Repair brief generation for coding agents.
-- Local static ROI panel with repair brief copy CTA.
-- Install and upgrade diagnostics: `version --verbose`, `doctor`, `verify-install`, `upgrade-command`.
-- Dependency-free MCP stdio server.
-
-## Useful CLI
+## CLI
 
 ```bash
-# Diagnose install and environment
-python3 -m tokensaver.cli version --verbose
-python3 -m tokensaver.cli doctor
-python3 -m tokensaver.cli init-profile --template coding-agent
-python3 -m tokensaver.cli doctor --profile .tokensaver/profile.yaml
-python3 -m tokensaver.cli check-update
-python3 -m tokensaver.cli upgrade-command --commit COMMIT
-python3 -m tokensaver.cli verify-install --commit COMMIT --check-project-files
+# Product demo
+tokensaver demo
+tokensaver open
 
-# Record and inspect runs
-python3 -m tokensaver.cli record-run --file examples/run.json --profile .tokensaver/profile.yaml
-python3 -m tokensaver.cli list --limit 20
-python3 -m tokensaver.cli report latest --profile .tokensaver/profile.yaml
-python3 -m tokensaver.cli brief latest --profile .tokensaver/profile.yaml
-python3 -m tokensaver.cli top-tools --last 50
-python3 -m tokensaver.cli compare --before RUN_ID --after RUN_ID --profile .tokensaver/profile.yaml
-python3 -m tokensaver.cli eval examples/agent_cases.json --profile .tokensaver/profile.yaml
+# Installation and environment checks
+tokensaver version --verbose
+tokensaver doctor
+tokensaver init-profile --template coding-agent
+
+# Record and inspect a run
+tokensaver record-run --file examples/run.json
+tokensaver latest --kind summary
+tokensaver latest --kind brief
+tokensaver latest --kind panel
+
+# Analyze multiple runs
+tokensaver list --limit 20
+tokensaver top-tools --last 50
+tokensaver compare --before RUN_ID --after RUN_ID
+tokensaver benchmark --before-file before.json --after-file after.json
 ```
+
+If the console script is not on `PATH`, use `python3 -m tokensaver.cli` in place of `tokensaver`.
 
 ## Profiles
 
-Profiles keep project-specific budgets and quality guardrails out of TokenSaver code:
+Profiles keep project-specific budgets and quality requirements outside application code:
 
 ```yaml
 app: my_agent
@@ -201,51 +192,51 @@ required_fields:
     - next_action
 ```
 
-Fixture evals can check optimization guardrails:
-
-```json
-[
-  {
-    "id": "quick_question_basic",
-    "input": "Summarize the current status.",
-    "task_type": "quick_question",
-    "expected_required_fields": ["conclusion", "next_action"],
-    "max_output_tokens": 1200
-  }
-]
-```
-
 Built-in templates:
 
-- `chatbot`
-- `coding-agent`
-- `crm-agent`
-- `finance-assistant`
-- `legal-assistant`
-- `research-agent`
-- `support-bot`
+```text
+chatbot, coding-agent, crm-agent, finance-assistant,
+legal-assistant, research-agent, support-bot
+```
 
 ## MCP
 
-Start the stdio MCP server:
+Start the dependency-free stdio server:
 
 ```bash
-python3 -m tokensaver.mcp_server
+tokensaver-mcp
 ```
 
-Main MCP tools:
+Main tools include:
 
 - `tokensaver.plan_task`
 - `tokensaver.record_agent_run`
-- `tokensaver.init_profile`
-- `tokensaver.eval_fixtures`
 - `tokensaver.diagnose_roi`
 - `tokensaver.generate_repair_brief`
-- `tokensaver.get_version`
-- `tokensaver.check_update`
+- `tokensaver.eval_fixtures`
 - `tokensaver.doctor`
-- `tokensaver.verify_install`
-- `tokensaver.upgrade_command`
+
+## Privacy By Default
+
+TokenSaver is local-first:
+
+- prompts, context, traces, and tool results are not uploaded by default
+- the core diagnosis loop does not call an LLM
+- stored traces omit raw context and tool text after estimating their size
+- the HTML panel is a static offline file
+
+See [OPEN_SOURCE_SCOPE.md](OPEN_SOURCE_SCOPE.md) and [SECURITY.md](SECURITY.md) for the current boundary.
+
+## Project Status
+
+TokenSaver is beta software. The local trace, diagnosis, repair brief, comparison, GUI panel, integration helpers, CLI, and MCP server are implemented. It is not currently a hosted observability platform or automatic LLM gateway.
+
+Useful project documents:
+
+- [Integration guide](docs/集成指南.md)
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
+- [Open-source scope](OPEN_SOURCE_SCOPE.md)
 
 ## Development
 
@@ -254,35 +245,7 @@ git clone https://github.com/zhangtao-jayce/TokenSaver.git
 cd TokenSaver
 python3 -m unittest discover -s tests
 python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli demo --store-dir /private/tmp/tokensaver-demo
 ```
 
-## Docs
-
-- [Integration Guide](docs/集成指南.md)
-- [Open Source Scope](OPEN_SOURCE_SCOPE.md)
-- [Version Management](VERSION.md)
-- [Changelog](CHANGELOG.md)
-- [Security Policy](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
-
-## Compatibility Notes
-
-TokenSaver normalizes older finding codes when comparing historical runs:
-
-- `wrong_route_for_task` -> `deep_route_for_short_task`
-- `tool_output_too_large` -> `oversized_tool_output`
-- `raw_tool_payload` -> `raw_payload_in_default_path`
-- `repeated_tool_without_cache` -> `repeated_tool_call_without_cache`
-- `context_item_too_large` -> `oversized_context_item`
-- `history_context_waste` -> `history_context_pollution`
-- `answer_too_long_for_channel` -> `channel_output_over_budget`
-- `overpowered_model_for_quick_task` -> `strong_model_for_simple_task`
-- `missing_required_quality_field` -> `required_field_missing`
-- `quality_fields_not_verified` -> `quality_regression_risk`
-
-Deferred roadmap items:
-
-- Optional full YAML support through PyYAML or another parser.
-- More domain templates such as finance, legal, and CRM after quality expectations are defined.
-- Eval execution against a live host Agent entrypoint.
-- Automatic profile inference and optimization PR generation.
+Contributions that improve real Agent integrations, diagnosis rules, benchmark fixtures, and before/after case studies are especially useful.

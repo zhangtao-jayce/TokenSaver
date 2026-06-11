@@ -1,0 +1,29 @@
+{
+  "run_id": "langgraph-after",
+  "app": "langgraph_support_agent",
+  "channel": "chat",
+  "user_message": "Check ticket 1842 and summarize the next action.",
+  "task_type": "quick_question",
+  "route": "ticket_status",
+  "budget": {
+    "input_tokens": 4000,
+    "output_tokens": 700,
+    "latency_ms": 15000
+  },
+  "context_items": [
+    {"name": "recent_ticket_summary", "kind": "summary", "tokens": 380}
+  ],
+  "tool_calls": [
+    {"name": "get_ticket", "input_tokens": 30, "output_tokens": 260, "latency_ms": 350, "cached": true}
+  ],
+  "model_calls": [
+    {"model": "small-model", "input_tokens": 1100, "output_tokens": 160, "latency_ms": 900}
+  ],
+  "answer": "Ticket 1842 is waiting for customer confirmation. Next action: follow up tomorrow.",
+  "answer_tokens": 85,
+  "input_tokens": 1510,
+  "output_tokens": 505,
+  "latency_ms": 1250,
+  "quality_requirements": ["conclusion", "next_action"],
+  "quality_signals": {"conclusion": true, "next_action": true}
+}

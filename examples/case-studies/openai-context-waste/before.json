@@ -1,0 +1,30 @@
+{
+  "run_id": "openai-context-before",
+  "app": "openai_coding_agent",
+  "channel": "ide",
+  "user_message": "Explain why this unit test fails.",
+  "task_type": "quick_question",
+  "route": "deep_repository_analysis",
+  "budget": {
+    "input_tokens": 6000,
+    "output_tokens": 900,
+    "latency_ms": 20000
+  },
+  "context_items": [
+    {"name": "entire_repository_dump", "kind": "source", "tokens": 18000},
+    {"name": "full_chat_history", "kind": "history", "tokens": 5200}
+  ],
+  "tool_calls": [
+    {"name": "read_repository", "input_tokens": 120, "output_tokens": 9000, "latency_ms": 6500, "cached": false}
+  ],
+  "model_calls": [
+    {"model": "gpt-frontier", "input_tokens": 25000, "output_tokens": 1200, "latency_ms": 14000}
+  ],
+  "answer": "Root cause: the fixture omits the required status field. Fix the fixture and rerun the failing unit test.",
+  "answer_tokens": 620,
+  "input_tokens": 48320,
+  "output_tokens": 10820,
+  "latency_ms": 20500,
+  "quality_requirements": ["root_cause", "fix", "test"],
+  "quality_signals": {"root_cause": true, "fix": true, "test": true}
+}

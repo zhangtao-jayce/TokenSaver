@@ -1,0 +1,36 @@
+{
+  "run_id": "rag-after",
+  "app": "policy_rag_agent",
+  "channel": "web",
+  "user_message": "What is the cancellation policy?",
+  "task_type": "quick_question",
+  "route": "top_k_policy_rag",
+  "budget": {
+    "input_tokens": 5000,
+    "output_tokens": 700,
+    "latency_ms": 12000
+  },
+  "context_items": [
+    {"name": "top_policy_passages", "kind": "retrieval", "tokens": 1400}
+  ],
+  "tool_calls": [
+    {
+      "name": "vector_search",
+      "input_tokens": 40,
+      "output_tokens": 1400,
+      "latency_ms": 650,
+      "cached": true,
+      "metadata": {"mode": "summary", "record_count": 4}
+    }
+  ],
+  "model_calls": [
+    {"model": "small-model", "input_tokens": 2400, "output_tokens": 260, "latency_ms": 1300}
+  ],
+  "answer": "The policy allows cancellation within 14 days, except for activated custom plans. Source: cancellation policy section 2.",
+  "answer_tokens": 170,
+  "input_tokens": 3840,
+  "output_tokens": 1830,
+  "latency_ms": 1950,
+  "quality_requirements": ["policy", "exception", "source"],
+  "quality_signals": {"policy": true, "exception": true, "source": true}
+}

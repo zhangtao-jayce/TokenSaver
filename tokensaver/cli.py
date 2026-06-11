@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import webbrowser
 from pathlib import Path
 
+from .benchmark import benchmark_runs
 from .brief import generate_repair_brief
 from .demo import run_demo
 from .diagnosis import diagnose_run
@@ -153,6 +155,18 @@ def main(argv: list[str] | None = None) -> int:
     demo_parser = subparsers.add_parser("demo", help="Run an offline before/after ROI demo.")
     demo_parser.add_argument("--store-dir", default=".tokensaver-demo")
     demo_parser.add_argument("--json", action="store_true")
+
+    benchmark_parser = subparsers.add_parser("benchmark", help="Compare before/after run JSON.")
+    benchmark_parser.add_argument("--before-file", required=True)
+    benchmark_parser.add_argument("--after-file", required=True)
+    benchmark_parser.add_argument("--output-dir", default=".tokensaver-benchmark")
+    benchmark_parser.add_argument("--title", default="TokenSaver Agent ROI Benchmark")
+    benchmark_parser.add_argument("--json", action="store_true")
+
+    open_parser = subparsers.add_parser("open", help="Open a local TokenSaver HTML panel.")
+    open_parser.add_argument("--store-dir", default=".tokensaver")
+    open_parser.add_argument("--demo-store-dir", default=".tokensaver-demo")
+    open_parser.add_argument("--no-browser", action="store_true")
 
     args = parser.parse_args(argv)
 
@@ -416,6 +430,35 @@ def main(argv: list[str] | None = None) -> int:
             _print_demo(result)
         return 0
 
+    if args.command == "benchmark":
+        before = _read_json_file(args.before_file)
+        after = _read_json_file(args.after_file)
+        result = benchmark_runs(
+            before,
+            after,
+            output_dir=args.output_dir,
+            title=args.title,
+        )
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            comparison = result["comparison"]
+            print(f"Result: {str(comparison['result']).upper()}")
+            print(f"Benchmark: {result['artifacts']['markdown']}")
+            print(f"Share card: {result['artifacts']['share_card']}")
+        return 0
+
+    if args.command == "open":
+        panel = Path(args.store_dir) / "panel" / "index.html"
+        if not panel.exists():
+            result = run_demo(args.demo_store_dir)
+            panel = Path(str((result.get("artifacts") or {}).get("panel")))
+        resolved = panel.resolve()
+        print(str(resolved))
+        if not args.no_browser:
+            webbrowser.open(resolved.as_uri())
+        return 0
+
     parser.error(f"Unknown command: {args.command}")
     return 2
 
@@ -445,6 +488,16 @@ def _read_json_arg(path: str | None) -> dict[str, object]:
     value = json.loads(text)
     if not isinstance(value, dict):
         raise SystemExit("Expected a JSON object.")
+    return value
+
+
+def _read_json_file(path: str) -> dict[str, object]:
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Cannot read run JSON {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"Expected a JSON object in {path}.")
     return value
 
 

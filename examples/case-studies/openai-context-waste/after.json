@@ -1,0 +1,31 @@
+{
+  "run_id": "openai-context-after",
+  "app": "openai_coding_agent",
+  "channel": "ide",
+  "user_message": "Explain why this unit test fails.",
+  "task_type": "quick_question",
+  "route": "targeted_test_debug",
+  "budget": {
+    "input_tokens": 6000,
+    "output_tokens": 900,
+    "latency_ms": 20000
+  },
+  "context_items": [
+    {"name": "failing_test", "kind": "source", "tokens": 620},
+    {"name": "stack_trace", "kind": "error", "tokens": 410},
+    {"name": "related_function", "kind": "source", "tokens": 980}
+  ],
+  "tool_calls": [
+    {"name": "read_related_files", "input_tokens": 60, "output_tokens": 850, "latency_ms": 700, "cached": false}
+  ],
+  "model_calls": [
+    {"model": "gpt-mini", "input_tokens": 3100, "output_tokens": 420, "latency_ms": 2200}
+  ],
+  "answer": "Root cause: the fixture omits the required status field. Fix the fixture and rerun the failing unit test.",
+  "answer_tokens": 280,
+  "input_tokens": 5170,
+  "output_tokens": 1550,
+  "latency_ms": 2900,
+  "quality_requirements": ["root_cause", "fix", "test"],
+  "quality_signals": {"root_cause": true, "fix": true, "test": true}
+}

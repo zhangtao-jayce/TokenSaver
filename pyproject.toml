@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tokensaver"
+name = "tokensaver-agent"
 version = "0.6.0"
 description = "Open-source runtime ROI diagnosis toolkit for AI Agent applications."
 readme = "README.md"
@@ -33,4 +33,5 @@ include = ["tokensaver*"]
 
 [project.scripts]
 tokensaver = "tokensaver.cli:main"
+tokensaver-agent = "tokensaver.cli:main"
 tokensaver-mcp = "tokensaver.mcp_server:main"

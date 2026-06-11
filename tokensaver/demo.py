@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
+from .benchmark import benchmark_runs
 from .runtime import record_agent_run
-from .store import compare_runs
 
 
 def run_demo(store_dir: str | Path = ".tokensaver-demo") -> dict[str, Any]:
@@ -17,7 +16,13 @@ def run_demo(store_dir: str | Path = ".tokensaver-demo") -> dict[str, Any]:
     before = record_agent_run(_before_run(), store_dir=root)
     before_panel = (root / "panel" / "index.html").read_text(encoding="utf-8")
     after = record_agent_run(_after_run(), store_dir=root)
-    comparison = compare_runs(before, after)
+    benchmark_result = benchmark_runs(
+        before,
+        after,
+        output_dir=root,
+        title="TokenSaver Demo Benchmark",
+    )
+    comparison = benchmark_result["comparison"]
     (root / "panel" / "before.html").write_text(before_panel, encoding="utf-8")
     (root / "panel" / "after.html").write_text(
         (root / "panel" / "index.html").read_text(encoding="utf-8"),
@@ -35,66 +40,12 @@ def run_demo(store_dir: str | Path = ".tokensaver-demo") -> dict[str, Any]:
             "after_panel": str(root / "panel" / "after.html"),
             "report": str(root / "reports" / "latest.md"),
             "brief": str(root / "briefs" / "latest.md"),
-            "benchmark_json": str(root / "benchmark.json"),
-            "benchmark_markdown": str(root / "benchmark.md"),
+            "benchmark_json": benchmark_result["artifacts"]["json"],
+            "benchmark_markdown": benchmark_result["artifacts"]["markdown"],
+            "share_card": benchmark_result["artifacts"]["share_card"],
         },
     }
-    root.mkdir(parents=True, exist_ok=True)
-    (root / "benchmark.json").write_text(
-        json.dumps(benchmark, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    (root / "benchmark.md").write_text(
-        render_demo_benchmark(before, after, comparison),
-        encoding="utf-8",
-    )
     return benchmark
-
-
-def render_demo_benchmark(
-    before: dict[str, Any],
-    after: dict[str, Any],
-    comparison: dict[str, Any],
-) -> str:
-    deltas = comparison["deltas"]
-    return "\n".join(
-        [
-            "# TokenSaver Demo Benchmark",
-            "",
-            "A deterministic offline example showing a short support request before and after workflow repair.",
-            "",
-            "| Metric | Before | After | Change |",
-            "| --- | ---: | ---: | ---: |",
-            _metric_row("Input tokens", deltas["input_tokens"]),
-            _metric_row("Output tokens", deltas["output_tokens"]),
-            _metric_row("Latency", deltas["latency_ms"], suffix="ms"),
-            (
-                f"| ROI score | {(before.get('diagnosis') or {}).get('roi_score', 100)} "
-                f"| {(after.get('diagnosis') or {}).get('roi_score', 100)} "
-                f"| {comparison['roi_score']['delta']:+d} |"
-            ),
-            "",
-            "## Resolved Findings",
-            "",
-            *[f"- `{code}`" for code in comparison["resolved_findings"]],
-            "",
-            "## Result",
-            "",
-            f"**{str(comparison['result']).upper()}**",
-            "",
-            "This benchmark uses bundled fixture data. It is a product demonstration, not a claim about every Agent workload.",
-            "",
-        ]
-    )
-
-
-def _metric_row(label: str, metric: dict[str, Any], *, suffix: str = "") -> str:
-    change = metric.get("delta_pct")
-    change_text = "n/a" if change is None else f"{change:+.1f}%"
-    return (
-        f"| {label} | {metric['before']}{suffix} | {metric['after']}{suffix} "
-        f"| {change_text} |"
-    )
 
 
 def _before_run() -> dict[str, Any]:

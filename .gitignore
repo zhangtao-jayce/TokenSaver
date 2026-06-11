@@ -12,4 +12,6 @@ build/
 .env
 .tokensaver/
 .tokensaver-demo/
+.tokensaver-benchmark/
+.tokensaver-cases/
 private_docs/

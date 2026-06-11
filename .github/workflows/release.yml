@@ -5,6 +5,12 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      publish_pypi:
+        description: "Publish to PyPI using Trusted Publishing"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -25,3 +31,19 @@ jobs:
         with:
           name: python-distributions
           path: dist/
+
+  publish-pypi:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_pypi
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tokensaver-agent
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

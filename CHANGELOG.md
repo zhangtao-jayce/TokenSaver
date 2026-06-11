@@ -12,6 +12,11 @@ Make TokenSaver understandable and testable within 30 seconds, while establishin
 
 - `tokensaver demo` deterministic offline before/after product demo.
 - Demo benchmark artifacts in Markdown and JSON.
+- `tokensaver benchmark` for arbitrary before/after run files.
+- `tokensaver open` for opening an existing panel or generating the offline demo.
+- Anonymous SVG benchmark share cards.
+- Three deterministic Agent ROI case studies.
+- Pull request benchmark comments.
 - GitHub Actions CI across Python 3.10-3.13.
 - Tagged-release distribution build workflow.
 - Weekly repository traffic and growth metric snapshots.

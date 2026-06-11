@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tokensaver.benchmark import benchmark_runs
+from tokensaver.cli import main
 from tokensaver.demo import run_demo
 
 
@@ -32,6 +34,7 @@ class DemoTests(unittest.TestCase):
                 (Path(tmp) / "benchmark.md").read_text(encoding="utf-8"),
             )
             self.assertTrue((Path(tmp) / "panel" / "index.html").exists())
+            self.assertTrue((Path(tmp) / "share-card.svg").exists())
             self.assertIn(
                 "High Cost",
                 (Path(tmp) / "panel" / "before.html").read_text(encoding="utf-8"),
@@ -40,6 +43,49 @@ class DemoTests(unittest.TestCase):
                 "Healthy",
                 (Path(tmp) / "panel" / "after.html").read_text(encoding="utf-8"),
             )
+
+    def test_benchmark_and_open_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            before_path = root / "before.json"
+            after_path = root / "after.json"
+            before_path.write_text(
+                '{"run_id":"before","input_tokens":1000,"output_tokens":500,"latency_ms":3000}',
+                encoding="utf-8",
+            )
+            after_path.write_text(
+                '{"run_id":"after","input_tokens":500,"output_tokens":200,"latency_ms":1000}',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "benchmark",
+                        "--before-file",
+                        str(before_path),
+                        "--after-file",
+                        str(after_path),
+                        "--output-dir",
+                        str(root / "benchmark"),
+                    ]
+                ),
+                0,
+            )
+            self.assertTrue((root / "benchmark" / "share-card.svg").exists())
+            self.assertEqual(
+                main(
+                    [
+                        "open",
+                        "--store-dir",
+                        str(root / "missing"),
+                        "--demo-store-dir",
+                        str(root / "demo"),
+                        "--no-browser",
+                    ]
+                ),
+                0,
+            )
+            self.assertTrue((root / "demo" / "panel" / "index.html").exists())
 
 
 if __name__ == "__main__":

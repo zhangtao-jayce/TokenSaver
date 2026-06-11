@@ -4,6 +4,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB)](https://www.python.org/)
 [![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Local first](https://img.shields.io/badge/data-local--first-16794a)](#privacy-by-default)
+[![Demo input tokens](https://img.shields.io/badge/demo_input_tokens--92.4%25-16794a)](#see-it-in-30-seconds)
 
 **Find wasted context, tool calls, model calls, and workflow routes in AI agents, locally. Then generate a repair brief for Codex or Claude Code.**
 
@@ -15,18 +16,23 @@ Agent run -> Local trace -> ROI diagnosis -> Repair brief -> Before/after compar
 
 No hosted account. No required LLM call. No prompt or trace upload by default.
 
-![TokenSaver local ROI report showing a high-cost Agent run](docs/assets/tokensaver-panel.png)
+![TokenSaver demo changing a high-cost Agent run into a healthy run](docs/assets/tokensaver-demo.gif)
 
 ## See It In 30 Seconds
 
 ```bash
-python3 -m pip install --upgrade \
-  git+https://github.com/zhangtao-jayce/TokenSaver.git
-
-tokensaver demo
+uvx tokensaver-agent demo
 ```
 
 The offline demo writes a before/after benchmark and local HTML panel to `.tokensaver-demo/`.
+
+Or install it:
+
+```bash
+python3 -m pip install tokensaver-agent
+tokensaver demo
+tokensaver open
+```
 
 ```text
 Input tokens: 32540 -> 2460 (-92.4%)
@@ -37,6 +43,8 @@ Result: ACCEPTED
 ```
 
 These numbers come from the bundled deterministic demo fixture. They demonstrate the workflow and are not a claim about every Agent application.
+
+The generated `share-card.svg` can be attached to a PR, issue, release, or post without exposing prompts or tool payloads.
 
 ## What It Finds
 
@@ -122,11 +130,29 @@ tokensaver compare \
 
 TokenSaver reports token, latency, ROI score, resolved findings, new findings, and quality blockers. An optimization is rejected when it introduces tracked quality regressions.
 
+Generate a public Markdown report and anonymous SVG card directly from two run files:
+
+```bash
+tokensaver benchmark \
+  --before-file before.json \
+  --after-file after.json \
+  --output-dir .tokensaver-benchmark
+```
+
+Three deterministic cases are included:
+
+- [LangGraph repeated tool calls](examples/case-studies/langgraph-repeated-tools)
+- [OpenAI coding agent context waste](examples/case-studies/openai-context-waste)
+- [RAG oversized retrieval payload](examples/case-studies/rag-oversized-retrieval)
+
+See [examples/case-studies/README.md](examples/case-studies/README.md) for exact commands.
+
 ## CLI
 
 ```bash
 # Product demo
 tokensaver demo
+tokensaver open
 
 # Installation and environment checks
 tokensaver version --verbose
@@ -143,6 +169,7 @@ tokensaver latest --kind panel
 tokensaver list --limit 20
 tokensaver top-tools --last 50
 tokensaver compare --before RUN_ID --after RUN_ID
+tokensaver benchmark --before-file before.json --after-file after.json
 ```
 
 If the console script is not on `PATH`, use `python3 -m tokensaver.cli` in place of `tokensaver`.

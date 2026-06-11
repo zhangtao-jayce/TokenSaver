@@ -10,3 +10,5 @@ Tracked fields:
 - top external referrers
 
 Use these snapshots to compare README, release, demo, case-study, and distribution experiments. Traffic data is repository-level aggregate data; no visitor identities are collected.
+
+`experiments.jsonl` records public launch placements and their GitHub baseline. Community interaction counts are only added when they can be observed reliably; missing values are not estimated.

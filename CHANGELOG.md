@@ -2,6 +2,37 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.6.0 - 2026-06-11
+
+### Release Goal
+
+Make TokenSaver understandable and testable within 30 seconds, while establishing measurable open-source growth loops.
+
+### Added
+
+- `tokensaver demo` deterministic offline before/after product demo.
+- Demo benchmark artifacts in Markdown and JSON.
+- GitHub Actions CI across Python 3.10-3.13.
+- Tagged-release distribution build workflow.
+- Weekly repository traffic and growth metric snapshots.
+- Bug, integration, case-study, and pull request templates.
+- Python package build metadata and explicit package discovery.
+
+### Changed
+
+- Reworked the README around immediate value, proof, privacy, and integration.
+- Added project URLs, package classifiers, and SPDX license metadata.
+- Documented demo fixture limitations next to benchmark results.
+
+### Verification
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli demo --store-dir /private/tmp/tokensaver-demo
+python3 -m pip wheel . --no-deps -w /private/tmp/tokensaver-wheel
+```
+
 ## 0.5.1 - 2026-06-05
 
 ### Release Goal

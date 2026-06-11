@@ -1,0 +1,63 @@
+name: Growth metrics
+
+on:
+  schedule:
+    - cron: "17 1 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect GitHub repository and traffic metrics
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          mkdir -p growth-data
+          date_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          repo="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPOSITORY}")"
+          views="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPOSITORY}/traffic/views")"
+          clones="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPOSITORY}/traffic/clones")"
+          referrers="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${REPOSITORY}/traffic/popular/referrers")"
+          jq -n \
+            --arg captured_at "$date_utc" \
+            --argjson repo "$repo" \
+            --argjson views "$views" \
+            --argjson clones "$clones" \
+            --argjson referrers "$referrers" \
+            '{
+              captured_at: $captured_at,
+              stars: $repo.stargazers_count,
+              forks: $repo.forks_count,
+              watchers: $repo.subscribers_count,
+              open_issues: $repo.open_issues_count,
+              views_14d: $views.count,
+              unique_visitors_14d: $views.uniques,
+              clones_14d: $clones.count,
+              unique_cloners_14d: $clones.uniques,
+              top_referrers: $referrers
+            }' >> growth-data/github.jsonl
+      - name: Commit snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add growth-data/github.jsonl
+          git diff --cached --quiet || git commit -m "chore: record weekly growth metrics"
+          git push

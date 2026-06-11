@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .brief import generate_repair_brief
+from .demo import run_demo
 from .diagnosis import diagnose_run
 from .eval import evaluate_fixtures
 from .install import (
@@ -148,6 +149,10 @@ def main(argv: list[str] | None = None) -> int:
     top_tools_parser = subparsers.add_parser("top-tools", help="Show expensive tools from recent runs.")
     top_tools_parser.add_argument("--store-dir", default=".tokensaver")
     top_tools_parser.add_argument("--last", type=int, default=50)
+
+    demo_parser = subparsers.add_parser("demo", help="Run an offline before/after ROI demo.")
+    demo_parser.add_argument("--store-dir", default=".tokensaver-demo")
+    demo_parser.add_argument("--json", action="store_true")
 
     args = parser.parse_args(argv)
 
@@ -403,6 +408,14 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(_top_tools(store.load_runs(limit=args.last)), ensure_ascii=False, indent=2))
         return 0
 
+    if args.command == "demo":
+        result = run_demo(args.store_dir)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            _print_demo(result)
+        return 0
+
     parser.error(f"Unknown command: {args.command}")
     return 2
 
@@ -520,6 +533,36 @@ def _print_eval(result: dict[str, object]) -> None:
         failures = case.get("failures") or []
         suffix = f" failures={','.join(str(item) for item in failures)}" if failures else ""
         print(f"- {case.get('id')}: {case.get('result')} roi_score={case.get('roi_score')}{suffix}")
+
+
+def _print_demo(result: dict[str, object]) -> None:
+    comparison = result.get("comparison") or {}
+    if not isinstance(comparison, dict):
+        comparison = {}
+    deltas = comparison.get("deltas") or {}
+    if not isinstance(deltas, dict):
+        deltas = {}
+    print("TokenSaver offline demo complete.")
+    print("")
+    for label, key in (
+        ("Input tokens", "input_tokens"),
+        ("Output tokens", "output_tokens"),
+        ("Latency", "latency_ms"),
+    ):
+        metric = deltas.get(key) or {}
+        if isinstance(metric, dict):
+            pct = metric.get("delta_pct")
+            pct_text = "n/a" if pct is None else f"{float(pct):+.1f}%"
+            print(f"{label}: {metric.get('before')} -> {metric.get('after')} ({pct_text})")
+    roi = comparison.get("roi_score") or {}
+    if isinstance(roi, dict):
+        print(f"ROI score: {roi.get('before')} -> {roi.get('after')} ({int(roi.get('delta') or 0):+d})")
+    print(f"Result: {str(comparison.get('result') or '').upper()}")
+    print("")
+    artifacts = result.get("artifacts") or {}
+    if isinstance(artifacts, dict):
+        print(f"Benchmark: {artifacts.get('benchmark_markdown')}")
+        print(f"Panel: {artifacts.get('panel')}")
 
 
 def _print_update_info(data: dict[str, object]) -> None:

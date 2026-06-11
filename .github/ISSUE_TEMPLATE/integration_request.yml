@@ -1,0 +1,30 @@
+name: Integration request
+description: Propose or contribute support for an Agent framework or SDK.
+title: "[Integration]: "
+labels: ["integration"]
+body:
+  - type: input
+    id: framework
+    attributes:
+      label: Framework or SDK
+      placeholder: CrewAI, AutoGen, PydanticAI, custom runtime...
+    validations:
+      required: true
+  - type: textarea
+    id: entrypoint
+    attributes:
+      label: Agent run entrypoint
+      description: Show where user messages, tools, model calls, and final answers pass through the framework.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Minimal example
+      description: Link to a public example or include a minimal code sample.
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to test or contribute this integration.

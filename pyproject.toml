@@ -1,14 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "tokensaver"
-version = "0.5.1"
+version = "0.6.0"
 description = "Open-source runtime ROI diagnosis toolkit for AI Agent applications."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 authors = [
   { name = "TokenSaver Contributors" }
 ]
 keywords = ["llm", "agent", "token", "mcp", "observability", "roi", "runtime"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/zhangtao-jayce/TokenSaver"
+Documentation = "https://github.com/zhangtao-jayce/TokenSaver#readme"
+Issues = "https://github.com/zhangtao-jayce/TokenSaver/issues"
+Changelog = "https://github.com/zhangtao-jayce/TokenSaver/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+include = ["tokensaver*"]
 
 [project.scripts]
 tokensaver = "tokensaver.cli:main"

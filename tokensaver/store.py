@@ -304,7 +304,7 @@ class LocalStore:
             with self.runs_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(run, ensure_ascii=False, sort_keys=True) + "\n")
         except OSError as exc:
-            exc.add_note("tokensaver_stage=runs_write")
+            _set_failure_stage(exc, "runs_write")
             raise
 
     def _success_health(
@@ -392,7 +392,7 @@ class LocalStore:
             temporary.write_text(text, encoding="utf-8")
             os.replace(temporary, path)
         except OSError as exc:
-            exc.add_note(f"tokensaver_stage=artifact_write:{path.name}")
+            _set_failure_stage(exc, f"artifact_write:{path.name}")
             raise
         finally:
             if temporary.exists():
@@ -1033,11 +1033,21 @@ def _traffic_label(traffic_type: str) -> str:
 
 
 def _failure_stage(exc: Exception) -> str:
+    stage = getattr(exc, "tokensaver_stage", None)
+    if stage:
+        return str(stage)
     notes = getattr(exc, "__notes__", [])
     for note in notes:
         if str(note).startswith("tokensaver_stage="):
             return str(note).split("=", 1)[1]
     return "store_write"
+
+
+def _set_failure_stage(exc: Exception, stage: str) -> None:
+    try:
+        setattr(exc, "tokensaver_stage", stage)
+    except (AttributeError, TypeError):
+        pass
 
 
 def _percentile(values: list[int], percentile: float) -> int:

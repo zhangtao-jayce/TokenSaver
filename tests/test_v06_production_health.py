@@ -409,7 +409,7 @@ class AcceptanceFailureAndGuiTests(unittest.TestCase):
             def fail_selected(active_store, path, text):
                 if path.name == filename and (directory is None or path.parent.name == directory):
                     error = OSError(f"cannot write {path.name}")
-                    error.add_note(f"tokensaver_stage=artifact_write:{path.name}")
+                    error.tokensaver_stage = f"artifact_write:{path.name}"
                     raise error
                 return original(active_store, path, text)
 

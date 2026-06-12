@@ -8,13 +8,13 @@ from typing import Any
 
 from . import __version__
 from .brief import generate_repair_brief
-from .diagnosis import diagnose_run
+from .diagnosis import diagnose_health, diagnose_run
 from .eval import evaluate_fixtures
 from .install import build_upgrade_command, doctor, verbose_version_info, verify_install
 from .planner import plan_task
 from .profile import PROFILE_TEMPLATES, load_profile, write_profile_template
-from .runtime import record_agent_run
-from .store import LocalStore
+from .runtime import mark_deployment, record_agent_run
+from .store import LocalStore, normalize_traffic_type
 from .tokenizer import estimate_tokens
 from .update import check_for_update
 
@@ -101,6 +101,45 @@ TOOLS = [
                 "limit": {"type": "integer"},
                 "store_dir": {"type": "string"},
             },
+        },
+    },
+    {
+        "name": "tokensaver.get_latest",
+        "description": "Read the latest production, smoke-test, or deployment-audit run and artifact paths.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "traffic": {
+                    "type": "string",
+                    "enum": ["real", "smoke", "deployment"],
+                },
+                "store_dir": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "tokensaver.get_health",
+        "description": "Read cross-run trace health, deployment acceptance, and deterministic health findings.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "store_dir": {"type": "string"},
+                "stale_after_seconds": {"type": "integer"},
+            },
+        },
+    },
+    {
+        "name": "tokensaver.mark_deployment",
+        "description": "Start a new deployment acceptance cycle for the next production user run.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "store_dir": {"type": "string"},
+                "host_version": {"type": "string"},
+                "tokensaver_version": {"type": "string"},
+                "environment": {"type": "string"},
+            },
+            "required": ["host_version"],
         },
     },
     {
@@ -282,6 +321,42 @@ def _call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         store = LocalStore(arguments.get("store_dir") or ".tokensaver")
         result = {"runs": store.load_runs(limit=int(arguments.get("limit", 20)))}
         return _tool_text(result)
+
+    if name == "tokensaver.get_latest":
+        store = LocalStore(arguments.get("store_dir") or ".tokensaver")
+        traffic_type = normalize_traffic_type(arguments.get("traffic") or "real")
+        run = store.latest_run_for_traffic(traffic_type)
+        return _tool_text(
+            {
+                "traffic_type": traffic_type,
+                "run": run,
+                "report": store.read_latest_report(traffic_type),
+                "brief": store.read_latest_brief(traffic_type),
+            }
+        )
+
+    if name == "tokensaver.get_health":
+        store = LocalStore(arguments.get("store_dir") or ".tokensaver")
+        health = store.read_health()
+        return _tool_text(
+            {
+                "health": health,
+                "findings": diagnose_health(
+                    health,
+                    stale_after_seconds=int(arguments.get("stale_after_seconds", 86_400)),
+                ),
+            }
+        )
+
+    if name == "tokensaver.mark_deployment":
+        return _tool_text(
+            mark_deployment(
+                host_version=str(arguments.get("host_version") or ""),
+                tokensaver_version=arguments.get("tokensaver_version"),
+                environment=str(arguments.get("environment") or "production"),
+                store_dir=arguments.get("store_dir") or ".tokensaver",
+            )
+        )
 
     if name == "tokensaver.diagnose_roi":
         run = arguments.get("run") or _latest_run(arguments.get("store_dir") or ".tokensaver")

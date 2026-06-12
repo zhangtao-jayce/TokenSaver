@@ -55,7 +55,14 @@ def _before_run() -> dict[str, Any]:
         "channel": "chat",
         "user_message": "What is the current status of ticket 1842?",
         "task_type": "quick_question",
+        "caller_task_type": "quick_question",
+        "inferred_task_type": "quick_question",
         "route": "deep_research",
+        "metadata": {
+            "host_version": "demo-before",
+            "tokensaver_version": "0.6.1",
+            "environment": "demo",
+        },
         "budget": {
             "input_tokens": 4_000,
             "output_tokens": 700,
@@ -109,7 +116,14 @@ def _after_run() -> dict[str, Any]:
         "channel": "chat",
         "user_message": "What is the current status of ticket 1842?",
         "task_type": "quick_question",
+        "caller_task_type": "quick_question",
+        "inferred_task_type": "quick_question",
         "route": "ticket_status",
+        "metadata": {
+            "host_version": "demo-after",
+            "tokensaver_version": "0.6.1",
+            "environment": "demo",
+        },
         "budget": {
             "input_tokens": 4_000,
             "output_tokens": 700,

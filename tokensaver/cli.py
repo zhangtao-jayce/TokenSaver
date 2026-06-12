@@ -11,7 +11,7 @@ from pathlib import Path
 from .benchmark import benchmark_runs
 from .brief import generate_repair_brief
 from .demo import run_demo
-from .diagnosis import diagnose_run
+from .diagnosis import diagnose_health, diagnose_run
 from .eval import evaluate_fixtures
 from .install import (
     build_upgrade_command,
@@ -24,7 +24,13 @@ from .install import (
 from .planner import plan_task
 from .profile import PROFILE_TEMPLATES, load_profile, write_profile_template
 from .runtime import record_agent_run
-from .store import LocalStore
+from .store import (
+    TRAFFIC_DEPLOYMENT,
+    TRAFFIC_PRODUCTION,
+    TRAFFIC_SMOKE,
+    LocalStore,
+    normalize_traffic_type,
+)
 from .tokenizer import estimate_tokens
 from .update import check_for_update, get_version_info
 
@@ -106,6 +112,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     latest_parser.add_argument("--store-dir", default=".tokensaver")
     latest_parser.add_argument("--profile", help="Rebuild summary or brief with this profile.")
+    latest_parser.add_argument(
+        "--traffic",
+        choices=["real", "smoke", "deployment"],
+        default="real",
+        help="Select production, smoke, or deployment-audit traffic.",
+    )
+
+    health_parser = subparsers.add_parser("health", help="Show unified environment and runtime health.")
+    health_parser.add_argument("--store-dir", default=".tokensaver")
+    health_parser.add_argument("--project-dir", default=".")
+    health_parser.add_argument("--json", action="store_true")
+    health_parser.add_argument("--stale-after-seconds", type=int, default=86_400)
+
+    deployment_parser = subparsers.add_parser("mark-deployment", help="Start a deployment acceptance cycle.")
+    deployment_parser.add_argument("--store-dir", default=".tokensaver")
+    deployment_parser.add_argument("--host-version", required=True)
+    deployment_parser.add_argument("--tokensaver-version")
+    deployment_parser.add_argument("--environment", default="production")
 
     diagnose_parser = subparsers.add_parser("diagnose-run", help="Diagnose a run JSON.")
     diagnose_parser.add_argument("--file", help="Read run JSON from file. Defaults to stdin.")
@@ -319,11 +343,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "latest":
         store = LocalStore(args.store_dir)
+        traffic_type = _traffic_arg(args.traffic)
         if args.kind == "run":
-            print(json.dumps(store.latest_run() or {}, ensure_ascii=False, indent=2))
+            print(json.dumps(store.latest_run_for_traffic(traffic_type) or {}, ensure_ascii=False, indent=2))
             return 0
         if args.profile:
-            run = store.latest_run()
+            run = store.latest_run_for_traffic(traffic_type)
             if not run:
                 return 0
             run = _diagnose_with_profile(run, args.profile)
@@ -336,12 +361,55 @@ def main(argv: list[str] | None = None) -> int:
                 print(generate_run_summary(run), end="")
                 return 0
         if args.kind == "brief":
-            print(store.read_latest_brief(), end="")
+            print(store.read_latest_brief(traffic_type), end="")
             return 0
         if args.kind == "panel":
-            print(str(store.panel_dir / "index.html"))
+            suffix = {"real": "real", "smoke": "smoke", "deployment": "deployment"}[args.traffic]
+            path = store.panel_dir / f"{suffix}.html"
+            print(str(path if path.exists() else store.panel_dir / "index.html"))
             return 0
-        print(store.read_latest_report(), end="")
+        print(store.read_latest_report(traffic_type), end="")
+        return 0
+
+    if args.command == "health":
+        store = LocalStore(args.store_dir)
+        runtime_health = store.read_health()
+        environment = doctor(project_dir=args.project_dir, check_remote=False)
+        runtime_findings = diagnose_health(
+            runtime_health,
+            stale_after_seconds=args.stale_after_seconds,
+        )
+        environment_findings = [
+            finding
+            for finding in environment.get("findings") or []
+            if finding.get("category") == "environment"
+        ]
+        findings = [
+            {**finding, "category": "runtime"}
+            for finding in runtime_findings
+        ] + environment_findings
+        status = _unified_health_status(runtime_health, findings)
+        result = {
+            "status": status,
+            "runtime": runtime_health,
+            "environment": environment.get("version"),
+            "project_pins": (environment.get("version") or {}).get("project_pins", []),
+            "deployment_acceptance": runtime_health.get("deployment_acceptance") or {},
+            "findings": findings,
+        }
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            _print_health(result)
+        return 0 if status == "ok" else 1
+
+    if args.command == "mark-deployment":
+        marker = LocalStore(args.store_dir).mark_deployment(
+            host_version=args.host_version,
+            tokensaver_version=args.tokensaver_version,
+            environment=args.environment,
+        )
+        print(json.dumps(marker, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "diagnose-run":
@@ -523,6 +591,30 @@ def _filter_runs(
     return filtered
 
 
+def _traffic_arg(value: str) -> str:
+    return normalize_traffic_type(
+        {
+            "real": TRAFFIC_PRODUCTION,
+            "smoke": TRAFFIC_SMOKE,
+            "deployment": TRAFFIC_DEPLOYMENT,
+        }[value]
+    )
+
+
+def _unified_health_status(
+    runtime: dict[str, object],
+    findings: list[dict[str, object]],
+) -> str:
+    if runtime.get("status") == "failed" or any(
+        finding.get("category") == "runtime" and finding.get("severity") == "high"
+        for finding in findings
+    ):
+        return "failed"
+    if findings or runtime.get("status") not in {"ok"}:
+        return "degraded"
+    return "ok"
+
+
 def _run_list_item(run: dict[str, object]) -> dict[str, object]:
     diagnosis = run.get("diagnosis") or {}
     if not isinstance(diagnosis, dict):
@@ -693,6 +785,28 @@ def _print_doctor(result: dict[str, object]) -> None:
     print("")
     print("Upgrade command:")
     print(result.get("upgrade_command") or "")
+
+
+def _print_health(result: dict[str, object]) -> None:
+    runtime = result.get("runtime") or {}
+    acceptance = result.get("deployment_acceptance") or {}
+    environment = result.get("environment") or {}
+    print(f"Status: {result.get('status')}")
+    if isinstance(environment, dict):
+        print(f"TokenSaver: {environment.get('version')} ({environment.get('local_commit') or 'unknown commit'})")
+        print(f"Python: {environment.get('python_executable')}")
+        print(f"Install mode: {environment.get('install_mode')}")
+        print(f"CLI on PATH: {environment.get('cli_script_on_path')}")
+    if isinstance(runtime, dict):
+        print(f"Last real trace: {runtime.get('last_real_run_at') or 'never'}")
+        print(f"Failures: {runtime.get('failure_count', 0)} total, {runtime.get('consecutive_failure_count', 0)} consecutive")
+        print(f"Last write latency: {runtime.get('last_trace_write_latency_ms', 0)}ms")
+    if isinstance(acceptance, dict):
+        print(f"Deployment acceptance: {acceptance.get('status') or 'not_marked'}")
+    findings = result.get("findings") or []
+    for finding in findings:
+        if isinstance(finding, dict):
+            print(f"- [{finding.get('category')}/{finding.get('severity')}] {finding.get('code')}: {finding.get('message')}")
 
 
 def _print_verify(result: dict[str, object]) -> None:

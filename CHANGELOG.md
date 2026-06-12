@@ -2,6 +2,47 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.6.1 - 2026-06-12
+
+### Release Goal
+
+Add local production integration health to the v0.6 release line.
+
+### Added
+
+- Production, smoke-test, and deployment-audit traffic types.
+- Production-only generic latest artifacts plus per-traffic reports, briefs, and panels.
+- Atomic `.tokensaver/health.json`, deployment marker, and latest-by-route index.
+- Deployment acceptance for the first real request after a release.
+- Trace completeness findings and caller/inferred task classification conflicts.
+- Logging and failure callback interfaces with health failure persistence.
+- Unified `tokensaver health`, doctor runtime state, and production-health GUI cards.
+- MCP tools for health, traffic latest, and deployment markers.
+- Cross-run version/traffic trend aggregation and long-term tool governance.
+- 45 Goldfinger-like v0.6 production health tests.
+
+### Changed
+
+- New traces use schema `0.3`; legacy traces without traffic type remain production-compatible.
+- Smoke and deployment audit runs no longer replace production ROI.
+
+### Verification
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli demo --store-dir /private/tmp/tokensaver-demo
+python3 -m tokensaver.cli health --store-dir /private/tmp/tokensaver-v06 --json
+python3 -m pip wheel . --no-deps -w /private/tmp/tokensaver-wheel
+```
+
+Test result:
+
+```text
+Ran 85 tests
+OK
+```
+
 ## 0.6.0 - 2026-06-11
 
 ### Release Goal

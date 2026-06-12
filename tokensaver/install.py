@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .diagnosis import diagnose_health
+from .store import LocalStore
 from .update import INSTALL_URL, check_for_update
 
 
@@ -144,12 +146,25 @@ def doctor(
                 )
             )
 
-    ok = not any(item.severity == "high" for item in findings)
+    runtime_health = LocalStore(Path(project_dir) / ".tokensaver").read_health()
+    runtime_findings = diagnose_health(runtime_health)
+    environment_findings = [{**item.to_dict(), "category": "environment"} for item in findings]
+    combined_findings = [
+        {**item, "category": "runtime"}
+        for item in runtime_findings
+    ] + environment_findings
+    runtime_failed = runtime_health.get("status") == "failed" or any(
+        item.get("severity") == "high" for item in runtime_findings
+    )
+    ok = not runtime_failed and not any(item.severity == "high" for item in findings)
     return {
         "ok": ok,
+        "status": "failed" if runtime_failed else ("ok" if ok else "degraded"),
         "version": info,
         "update": update,
-        "findings": [item.to_dict() for item in findings],
+        "runtime": runtime_health,
+        "deployment_acceptance": runtime_health.get("deployment_acceptance") or {},
+        "findings": combined_findings,
         "upgrade_command": build_upgrade_command(commit=current_commit or None),
     }
 

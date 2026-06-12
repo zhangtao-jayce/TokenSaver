@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from .profile import load_profile, profile_required_fields
@@ -204,6 +205,8 @@ def diagnose_run(run: dict[str, Any], *, profile: dict[str, Any] | None = None) 
         sensitive_tasks=sensitive_tasks,
         profile=profile,
     )
+    _add_trace_completeness_findings(findings, run)
+    _add_task_type_mismatch_finding(findings, run, profile=profile)
 
     codes = [finding.code for finding in findings]
     dimensions = _score_dimensions(
@@ -226,6 +229,195 @@ def diagnose_run(run: dict[str, Any], *, profile: dict[str, Any] | None = None) 
         "findings": [finding.to_dict() for finding in findings],
         "status": "ok" if not findings else "needs_attention",
     }
+
+
+def diagnose_health(
+    health: dict[str, Any],
+    *,
+    stale_after_seconds: int = 86_400,
+) -> list[dict[str, Any]]:
+    findings: list[DiagnosisFinding] = []
+    last_real = _parse_datetime(health.get("last_real_run_at"))
+    if last_real is not None:
+        age_seconds = int((datetime.now(timezone.utc) - last_real).total_seconds())
+        if age_seconds > stale_after_seconds:
+            findings.append(
+                DiagnosisFinding(
+                    code="trace_stale",
+                    severity="high",
+                    message="The latest production trace is stale.",
+                    evidence={"last_real_run_at": health.get("last_real_run_at"), "age_seconds": age_seconds},
+                    recommendation="Verify that production requests still initialize and finish TokenSaver tracing.",
+                    owner_area="integration/runtime",
+                )
+            )
+    acceptance = health.get("deployment_acceptance") or {}
+    if acceptance.get("status") == "awaiting":
+        findings.append(
+            DiagnosisFinding(
+                code="no_real_run_after_deploy",
+                severity="high",
+                message="No production user run has passed deployment acceptance yet.",
+                evidence={"deployed_at": acceptance.get("deployed_at")},
+                recommendation="Send one real production request and inspect its acceptance result.",
+                owner_area="deployment",
+            )
+        )
+    if int(health.get("consecutive_failure_count") or 0) > 0:
+        findings.append(
+            DiagnosisFinding(
+                code="trace_write_failed",
+                severity="high",
+                message="Recent TokenSaver trace persistence failed.",
+                evidence={
+                    "consecutive_failure_count": health.get("consecutive_failure_count"),
+                    "last_error": health.get("last_error"),
+                },
+                recommendation="Fix the recorded persistence stage and confirm a successful production trace resets consecutive failures.",
+                owner_area="integration/runtime",
+            )
+        )
+    latency = float(health.get("last_trace_write_latency_ms") or 0)
+    if latency > 1_000:
+        findings.append(
+            DiagnosisFinding(
+                code="trace_write_slow",
+                severity="medium",
+                message="The latest trace write was slow.",
+                evidence={"last_trace_write_latency_ms": latency, "threshold_ms": 1000},
+                recommendation="Inspect filesystem latency and reduce synchronous artifact work on the request path.",
+                owner_area="storage/runtime",
+            )
+        )
+    return [finding.to_dict() for finding in findings]
+
+
+def _add_trace_completeness_findings(
+    findings: list[DiagnosisFinding],
+    run: dict[str, Any],
+) -> None:
+    if "quality_signals" not in run:
+        findings.append(_missing_finding("quality_signals_missing", "quality_signals", "absent"))
+    elif not isinstance(run.get("quality_signals"), dict) or not run.get("quality_signals"):
+        findings.append(_missing_finding("quality_signals_missing", "quality_signals", "empty"))
+
+    metadata = run.get("metadata")
+    missing_metadata: list[dict[str, str]] = []
+    if not isinstance(metadata, dict):
+        missing_metadata.append({"field": "metadata", "state": "absent_or_invalid"})
+    else:
+        for field in ("host_version", "tokensaver_version", "environment"):
+            if field not in metadata:
+                missing_metadata.append({"field": field, "state": "absent"})
+            elif metadata.get(field) in (None, ""):
+                missing_metadata.append({"field": field, "state": "empty"})
+    if missing_metadata:
+        findings.append(
+            DiagnosisFinding(
+                code="deployment_metadata_missing",
+                severity="medium",
+                message="Deployment metadata is incomplete.",
+                evidence={"missing": missing_metadata},
+                recommendation="Record host_version, tokensaver_version, and environment in run metadata.",
+                owner_area="integration/schema",
+                impact="Deployment acceptance and version regression analysis need explicit version metadata.",
+            )
+        )
+
+    if "answer" not in run:
+        answer_state = "absent"
+    elif not str(run.get("answer") or "").strip():
+        answer_state = "empty"
+    else:
+        answer_state = ""
+    if answer_state:
+        findings.append(
+            DiagnosisFinding(
+                code="final_answer_missing",
+                severity="high",
+                message="The final answer was not captured.",
+                evidence={"field": "answer", "state": answer_state},
+                recommendation="Call record_final_answer() or provide a non-empty answer field.",
+                owner_area="integration/schema",
+                impact="Answer quality cannot be verified without the final user-visible response.",
+            )
+        )
+
+    incomplete_tools: list[dict[str, Any]] = []
+    for index, call in enumerate(run.get("tool_calls") or []):
+        missing_fields = []
+        for field in ("name", "input_tokens", "output_tokens", "latency_ms", "status"):
+            if field not in call:
+                missing_fields.append({"field": field, "state": "absent"})
+            elif field in {"name", "status"} and call.get(field) in (None, ""):
+                missing_fields.append({"field": field, "state": "empty"})
+        if missing_fields:
+            incomplete_tools.append({"index": index, "missing": missing_fields})
+    if incomplete_tools:
+        findings.append(
+            DiagnosisFinding(
+                code="tool_metadata_incomplete",
+                severity="medium",
+                message="One or more tool calls lack required trace metadata.",
+                evidence={"tool_calls": incomplete_tools},
+                recommendation="Record tool name, input/output token counts, latency, and status for every call.",
+                owner_area="integration/tooling",
+                impact="Incomplete tool traces hide latency, failure, and payload-cost causes.",
+            )
+        )
+
+
+def _missing_finding(code: str, field: str, state: str) -> DiagnosisFinding:
+    return DiagnosisFinding(
+        code=code,
+        severity="medium",
+        message=f"{field} is missing or empty.",
+        evidence={"field": field, "state": state},
+        recommendation=f"Record a non-empty {field} value for every production run.",
+        owner_area="integration/schema",
+        impact="Trace completeness is required for production health and deployment acceptance.",
+    )
+
+
+def _add_task_type_mismatch_finding(
+    findings: list[DiagnosisFinding],
+    run: dict[str, Any],
+    *,
+    profile: dict[str, Any],
+) -> None:
+    caller = run.get("caller_task_type")
+    inferred = run.get("inferred_task_type")
+    if not caller or not inferred or caller == inferred:
+        return
+    budgets = profile.get("budgets") or {}
+    findings.append(
+        DiagnosisFinding(
+            code="task_type_mismatch",
+            severity="medium",
+            message="Caller and TokenSaver task classification disagree.",
+            evidence={
+                "caller_task_type": caller,
+                "inferred_task_type": inferred,
+                "selected_task_type": run.get("task_type"),
+                "caller_budget": budgets.get(str(caller)),
+                "inferred_budget": budgets.get(str(inferred)),
+                "route": run.get("route"),
+            },
+            recommendation="Review the caller classification and choose the task type whose budget and route match the request.",
+            owner_area="router/profile",
+            impact="Classification conflicts can silently apply the wrong route and token budget.",
+        )
+    )
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _resolve_budget(

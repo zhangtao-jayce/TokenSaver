@@ -4,50 +4,129 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .brief import generate_repair_brief, generate_run_summary
 from .update import check_for_update, format_update_notice
+
+TRAFFIC_PRODUCTION = "production_user_run"
+TRAFFIC_SMOKE = "smoke_test"
+TRAFFIC_DEPLOYMENT = "deployment_audit"
+TRAFFIC_TYPES = {TRAFFIC_PRODUCTION, TRAFFIC_SMOKE, TRAFFIC_DEPLOYMENT}
+
+
+def normalize_traffic_type(value: Any) -> str:
+    aliases = {
+        None: TRAFFIC_PRODUCTION,
+        "": TRAFFIC_PRODUCTION,
+        "real": TRAFFIC_PRODUCTION,
+        "production": TRAFFIC_PRODUCTION,
+        "smoke": TRAFFIC_SMOKE,
+        "deployment": TRAFFIC_DEPLOYMENT,
+        "audit": TRAFFIC_DEPLOYMENT,
+    }
+    normalized = aliases.get(value, value)
+    if normalized not in TRAFFIC_TYPES:
+        raise ValueError(f"Unsupported traffic_type: {value!r}")
+    return str(normalized)
 
 
 class LocalStore:
     """Small local JSONL store for Agent runs and latest markdown artifacts."""
 
-    def __init__(self, root: str | Path = ".tokensaver") -> None:
+    def __init__(
+        self,
+        root: str | Path = ".tokensaver",
+        *,
+        failure_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self.root = Path(root)
+        self.failure_callback = failure_callback
         self.runs_path = self.root / "runs.jsonl"
         self.reports_dir = self.root / "reports"
         self.briefs_dir = self.root / "briefs"
         self.panel_dir = self.root / "panel"
+        self.index_dir = self.root / "index"
+        self.health_path = self.root / "health.json"
+        self.deployment_path = self.root / "deployment.json"
+        self.latest_by_route_path = self.index_dir / "latest_by_route.json"
 
     def save_run(self, run: dict[str, Any]) -> dict[str, str]:
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.reports_dir.mkdir(parents=True, exist_ok=True)
-        self.briefs_dir.mkdir(parents=True, exist_ok=True)
-        self.panel_dir.mkdir(parents=True, exist_ok=True)
-
-        with self.runs_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(run, ensure_ascii=False, sort_keys=True) + "\n")
-
-        update_info = _check_update_for_artifacts()
-        if update_info:
-            run["tokensaver_update"] = update_info
-
-        summary = generate_run_summary(run, update_info=update_info)
-        brief = generate_repair_brief(run, update_info=update_info)
-        report_path = self.reports_dir / "latest.md"
-        brief_path = self.briefs_dir / "latest.md"
-        report_path.write_text(summary, encoding="utf-8")
-        brief_path.write_text(brief, encoding="utf-8")
-        panel_path = self.panel_dir / "index.html"
-        panel_path.write_text(self._render_panel(run, update_info=update_info), encoding="utf-8")
-        return {
-            "runs_path": str(self.runs_path),
-            "report_path": str(report_path),
-            "brief_path": str(brief_path),
-            "panel_path": str(panel_path),
-        }
+        started = time.perf_counter()
+        run["traffic_type"] = normalize_traffic_type(run.get("traffic_type"))
+        try:
+            self._ensure_dirs()
+            self._append_run(run)
+            update_info = _check_update_for_artifacts()
+            if update_info:
+                run["tokensaver_update"] = update_info
+            summary = generate_run_summary(run, update_info=update_info)
+            brief = generate_repair_brief(run, update_info=update_info)
+            suffix = _traffic_suffix(run["traffic_type"])
+            report_path = self.reports_dir / f"latest_{suffix}.md"
+            brief_path = self.briefs_dir / f"latest_{suffix}.md"
+            panel_path = self.panel_dir / f"{suffix}.html"
+            self._atomic_write_text(report_path, summary)
+            self._atomic_write_text(brief_path, brief)
+            artifacts = {
+                "runs_path": str(self.runs_path),
+                "report_path": str(report_path),
+                "brief_path": str(brief_path),
+                "panel_path": str(panel_path),
+            }
+            current_health = self.read_health()
+            current_acceptance = current_health.get("deployment_acceptance") or {}
+            preliminary_panel = self._render_panel(
+                run,
+                update_info=update_info,
+                health=current_health,
+                acceptance=current_acceptance,
+            )
+            self._atomic_write_text(panel_path, preliminary_panel)
+            acceptance = self._evaluate_deployment_acceptance(run, artifacts)
+            health = self._success_health(
+                run,
+                latency_ms=round((time.perf_counter() - started) * 1000, 3),
+                acceptance=acceptance,
+            )
+            panel = self._render_panel(
+                run,
+                update_info=update_info,
+                health=health,
+                acceptance=acceptance,
+            )
+            self._atomic_write_text(panel_path, panel)
+            if run["traffic_type"] == TRAFFIC_PRODUCTION:
+                generic_report = self.reports_dir / "latest.md"
+                generic_brief = self.briefs_dir / "latest.md"
+                generic_panel = self.panel_dir / "index.html"
+                self._atomic_write_text(generic_report, summary)
+                self._atomic_write_text(generic_brief, brief)
+                self._atomic_write_text(generic_panel, panel)
+                artifacts.update(
+                    {
+                        "latest_report_path": str(generic_report),
+                        "latest_brief_path": str(generic_brief),
+                        "latest_panel_path": str(generic_panel),
+                    }
+                )
+            elif not (self.panel_dir / "index.html").exists():
+                self._atomic_write_text(self.panel_dir / "index.html", self._render_empty_panel(health))
+            self._update_latest_by_route(run, artifacts)
+            return artifacts
+        except Exception as exc:
+            self.record_failure(
+                stage=_failure_stage(exc),
+                error=str(exc),
+                run_id=str(run.get("run_id") or ""),
+                latency_ms=round((time.perf_counter() - started) * 1000, 3),
+            )
+            raise
 
     def load_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         if not self.runs_path.exists():
@@ -62,8 +141,13 @@ class LocalStore:
         return runs
 
     def latest_run(self) -> dict[str, Any] | None:
-        runs = self.load_runs(limit=1)
-        return runs[0] if runs else None
+        return self.latest_run_for_traffic(TRAFFIC_PRODUCTION)
+
+    def latest_run_for_traffic(self, traffic_type: str) -> dict[str, Any] | None:
+        wanted = normalize_traffic_type(traffic_type)
+        runs = self.load_runs(limit=0)
+        runs = [run for run in runs if normalize_traffic_type(run.get("traffic_type")) == wanted]
+        return runs[-1] if runs else None
 
     def find_run(self, run_id: str) -> dict[str, Any] | None:
         for run in self.load_runs(limit=0):
@@ -80,21 +164,271 @@ class LocalStore:
             raise ValueError(f"Run not found: {after_id}")
         return compare_runs(before, after)
 
-    def read_latest_report(self) -> str:
-        path = self.reports_dir / "latest.md"
+    def read_latest_report(self, traffic_type: str = TRAFFIC_PRODUCTION) -> str:
+        path = self.reports_dir / f"latest_{_traffic_suffix(normalize_traffic_type(traffic_type))}.md"
         return path.read_text(encoding="utf-8") if path.exists() else ""
 
-    def read_latest_brief(self) -> str:
-        path = self.briefs_dir / "latest.md"
+    def read_latest_brief(self, traffic_type: str = TRAFFIC_PRODUCTION) -> str:
+        path = self.briefs_dir / f"latest_{_traffic_suffix(normalize_traffic_type(traffic_type))}.md"
         return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def read_health(self) -> dict[str, Any]:
+        health = self._read_json(self.health_path, _default_health())
+        health["deployment_acceptance"] = self._read_json(
+            self.deployment_path,
+            health.get("deployment_acceptance") or {},
+        )
+        return health
+
+    def mark_deployment(
+        self,
+        *,
+        host_version: str,
+        environment: str = "production",
+        tokensaver_version: str | None = None,
+    ) -> dict[str, Any]:
+        from . import __version__
+
+        try:
+            self._ensure_dirs()
+            marker = {
+                "status": "awaiting",
+                "deployed_at": _utc_now(),
+                "host_version": host_version,
+                "tokensaver_version": tokensaver_version or __version__,
+                "environment": environment,
+                "missing_fields": [],
+                "recommendations": [],
+                "accepted_run_id": None,
+            }
+            self._atomic_write_json(self.deployment_path, marker)
+            health = self.read_health()
+            health["deployment_acceptance"] = marker
+            health["updated_at"] = _utc_now()
+            self._atomic_write_json(self.health_path, health)
+            return marker
+        except Exception as exc:
+            self.record_failure(stage=_failure_stage(exc), error=str(exc))
+            raise
+
+    def record_failure(
+        self,
+        *,
+        stage: str,
+        error: str,
+        run_id: str = "",
+        latency_ms: float = 0,
+    ) -> dict[str, Any]:
+        health = self.read_health()
+        health.update(
+            {
+                "status": "failed",
+                "updated_at": _utc_now(),
+                "last_failure_at": _utc_now(),
+                "last_error": {"stage": stage, "message": error, "run_id": run_id},
+                "failure_count": int(health.get("failure_count") or 0) + 1,
+                "consecutive_failure_count": int(health.get("consecutive_failure_count") or 0) + 1,
+                "last_trace_write_latency_ms": latency_ms,
+            }
+        )
+        try:
+            self._ensure_dirs()
+            self._atomic_write_json(self.health_path, health)
+        except OSError:
+            pass
+        if self.failure_callback is not None:
+            try:
+                self.failure_callback(
+                    {"stage": stage, "error": error, "run_id": run_id, "health": health}
+                )
+            except Exception as exc:
+                print(f"TokenSaver failure callback failed: {exc}", file=sys.stderr)
+        return health
+
+    def latest_by_route(self) -> dict[str, Any]:
+        return self._read_json(self.latest_by_route_path, {})
+
+    def trend_summary(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        groups: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+        for run in self.load_runs(limit=limit):
+            metadata = run.get("metadata") or {}
+            key = (
+                str(run.get("app") or ""),
+                str(metadata.get("host_version") or ""),
+                str(metadata.get("tokensaver_version") or ""),
+                str(run.get("task_type") or ""),
+                str(run.get("route") or ""),
+                str(run.get("channel") or ""),
+                normalize_traffic_type(run.get("traffic_type")),
+            )
+            groups.setdefault(key, []).append(run)
+        return [_trend_group(key, runs) for key, runs in groups.items()]
+
+    def tool_governance(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        totals: dict[str, dict[str, Any]] = {}
+        for run in self.load_runs(limit=limit):
+            for call in run.get("tool_calls") or []:
+                name = str(call.get("name") or "unnamed")
+                item = totals.setdefault(
+                    name,
+                    {"tool": name, "calls": 0, "output_tokens": 0, "latency_ms": 0, "failures": 0},
+                )
+                item["calls"] += 1
+                item["output_tokens"] += int(call.get("output_tokens") or 0)
+                item["latency_ms"] += int(call.get("latency_ms") or 0)
+                if str(call.get("status") or "ok") not in {"ok", "success"}:
+                    item["failures"] += 1
+        for item in totals.values():
+            calls = max(int(item["calls"]), 1)
+            item["avg_output_tokens"] = round(int(item["output_tokens"]) / calls, 2)
+            item["avg_latency_ms"] = round(int(item["latency_ms"]) / calls, 2)
+            item["failure_rate"] = round(int(item["failures"]) / calls, 3)
+        return sorted(
+            totals.values(),
+            key=lambda item: (item["output_tokens"], item["latency_ms"]),
+            reverse=True,
+        )
+
+    def _ensure_dirs(self) -> None:
+        for path in (
+            self.root,
+            self.reports_dir,
+            self.briefs_dir,
+            self.panel_dir,
+            self.index_dir,
+        ):
+            path.mkdir(parents=True, exist_ok=True)
+
+    def _append_run(self, run: dict[str, Any]) -> None:
+        try:
+            with self.runs_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(run, ensure_ascii=False, sort_keys=True) + "\n")
+        except OSError as exc:
+            _set_failure_stage(exc, "runs_write")
+            raise
+
+    def _success_health(
+        self,
+        run: dict[str, Any],
+        *,
+        latency_ms: float,
+        acceptance: dict[str, Any],
+    ) -> dict[str, Any]:
+        health = self.read_health()
+        traffic_type = normalize_traffic_type(run.get("traffic_type"))
+        now = _utc_now()
+        health.update(
+            {
+                "status": "ok",
+                "updated_at": now,
+                "last_success_trace_at": now,
+                "last_success_run_id": run.get("run_id") or "",
+                "consecutive_failure_count": 0,
+                "last_trace_write_latency_ms": latency_ms,
+                "deployment_acceptance": acceptance,
+            }
+        )
+        if traffic_type == TRAFFIC_PRODUCTION:
+            health["last_real_run_at"] = now
+        elif traffic_type == TRAFFIC_SMOKE:
+            health["last_smoke_run_at"] = now
+        else:
+            health["last_deployment_audit_at"] = now
+        self._atomic_write_json(self.health_path, health)
+        return health
+
+    def _evaluate_deployment_acceptance(
+        self,
+        run: dict[str, Any],
+        artifacts: dict[str, str],
+    ) -> dict[str, Any]:
+        marker = self._read_json(self.deployment_path, {})
+        if not marker or marker.get("status") != "awaiting":
+            return marker
+        if normalize_traffic_type(run.get("traffic_type")) != TRAFFIC_PRODUCTION:
+            return marker
+        missing = deployment_acceptance_missing_fields(run, artifacts)
+        marker.update(
+            {
+                "status": "failed" if missing else "passed",
+                "checked_at": _utc_now(),
+                "checked_run_id": run.get("run_id"),
+                "accepted_run_id": None if missing else run.get("run_id"),
+                "missing_fields": missing,
+                "recommendations": [_acceptance_recommendation(item) for item in missing],
+            }
+        )
+        self._atomic_write_json(self.deployment_path, marker)
+        return marker
+
+    def _update_latest_by_route(
+        self,
+        run: dict[str, Any],
+        artifacts: dict[str, str],
+    ) -> None:
+        index = self.latest_by_route()
+        key = "|".join(
+            [
+                str(run.get("app") or ""),
+                str(run.get("channel") or ""),
+                str(run.get("route") or ""),
+                normalize_traffic_type(run.get("traffic_type")),
+            ]
+        )
+        index[key] = {
+            "run_id": run.get("run_id"),
+            "app": run.get("app"),
+            "channel": run.get("channel"),
+            "route": run.get("route"),
+            "traffic_type": run.get("traffic_type"),
+            "ended_at": run.get("ended_at"),
+            "artifacts": artifacts,
+        }
+        self._atomic_write_json(self.latest_by_route_path, index)
+
+    def _atomic_write_text(self, path: Path, text: str) -> None:
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(text, encoding="utf-8")
+            os.replace(temporary, path)
+        except OSError as exc:
+            _set_failure_stage(exc, f"artifact_write:{path.name}")
+            raise
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+
+    def _atomic_write_json(self, path: Path, value: dict[str, Any]) -> None:
+        self._atomic_write_text(
+            path,
+            json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        )
+
+    @staticmethod
+    def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
+        if not path.exists():
+            return dict(default)
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return dict(default)
+        return value if isinstance(value, dict) else dict(default)
 
     def _render_panel(
         self,
         latest: dict[str, Any],
         *,
         update_info: dict[str, Any] | None = None,
+        health: dict[str, Any] | None = None,
+        acceptance: dict[str, Any] | None = None,
     ) -> str:
-        runs = self.load_runs(limit=20)
+        runs = [
+            run
+            for run in self.load_runs(limit=100)
+            if normalize_traffic_type(run.get("traffic_type")) == normalize_traffic_type(latest.get("traffic_type"))
+        ][-20:]
+        health = health or self.read_health()
+        acceptance = acceptance or health.get("deployment_acceptance") or {}
         diagnosis = latest.get("diagnosis") or {}
         findings = list(diagnosis.get("findings") or [])
         brief = generate_repair_brief(latest, update_info=update_info)
@@ -113,6 +447,10 @@ class LocalStore:
             for name, score in (diagnosis.get("dimensions") or {}).items()
         )
         trend = _trend_summary(runs)
+        traffic_label = _traffic_label(normalize_traffic_type(latest.get("traffic_type")))
+        health_status = str(health.get("status") or "unknown")
+        acceptance_status = str(acceptance.get("status") or "not_marked")
+        acceptance_details = ", ".join(str(item) for item in acceptance.get("missing_fields") or [])
         return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -276,6 +614,7 @@ class LocalStore:
       <div>
         <span class="badge {_esc(risk['class'])}">{_esc(risk['label'])}</span>
         <span class="badge">{_esc(status)}</span>
+        <span class="badge">{_esc(traffic_label)}</span>
       </div>
     </header>
     {update_notice}
@@ -290,6 +629,29 @@ class LocalStore:
         </p>
         <p class="muted" style="margin-top:8px;">{_esc(risk['explanation'])}</p>
       </div>
+    </section>
+
+    <div class="grid two">
+      <section class="section">
+        <h2>Production Health</h2>
+        <div class="grid metrics">
+          {_metric("Status", health_status)}
+          {_metric("Last Real Trace", health.get("last_real_run_at") or "Never")}
+          {_metric("Failures", health.get("failure_count", 0))}
+          {_metric("Consecutive", health.get("consecutive_failure_count", 0))}
+          {_metric("Write Latency", f"{health.get('last_trace_write_latency_ms', 0)}ms")}
+        </div>
+      </section>
+      <section class="section">
+        <h2>Deployment Acceptance</h2>
+        <p><span class="badge">{_esc(acceptance_status.title())}</span></p>
+        <p class="muted" style="margin-top:8px;">{_esc(acceptance_details or "No missing fields recorded.")}</p>
+      </section>
+    </div>
+
+    <section class="section">
+      <h2>Environment</h2>
+      <p class="muted">Run <code>tokensaver health --json</code> for version, commit, Python, PATH, dependency pin, trace, and acceptance details.</p>
     </section>
 
     <section class="section">
@@ -361,6 +723,22 @@ class LocalStore:
   </script>
 </body>
 </html>
+"""
+
+    def _render_empty_panel(self, health: dict[str, Any]) -> str:
+        acceptance = health.get("deployment_acceptance") or {}
+        return f"""<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TokenSaver Production Health</title>
+<style>body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f8fb;color:#18212f;margin:0}}main{{max-width:820px;margin:60px auto;padding:28px;background:#fff;border:1px solid #d8dee8;border-radius:8px}}.muted{{color:#657084}}</style></head>
+<body><main>
+<h1>TokenSaver Production Health</h1>
+<h2>No production traffic yet</h2>
+<p class="muted">Smoke and deployment audit runs are stored separately and never shown as production ROI.</p>
+<p>Health status: <strong>{_esc(str(health.get("status") or "unknown"))}</strong></p>
+<p>Deployment acceptance: <strong>{_esc(str(acceptance.get("status") or "not_marked"))}</strong></p>
+</main></body></html>
 """
 
 
@@ -574,6 +952,149 @@ def _render_update_notice(update_info: dict[str, Any] | None) -> str:
         f"<pre>{_esc(str(command))}</pre>"
         "</section>"
     )
+
+
+def deployment_acceptance_missing_fields(
+    run: dict[str, Any],
+    artifacts: dict[str, str] | None = None,
+) -> list[str]:
+    missing: list[str] = []
+    metadata = run.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    for field in ("host_version", "tokensaver_version", "environment"):
+        if field not in metadata or metadata.get(field) in (None, ""):
+            missing.append(f"metadata.{field}")
+    if "quality_signals" not in run or not isinstance(run.get("quality_signals"), dict):
+        missing.append("quality_signals")
+    elif not run.get("quality_signals"):
+        missing.append("quality_signals.non_empty")
+    for field in ("tool_calls", "model_calls"):
+        if field not in run or not isinstance(run.get(field), list):
+            missing.append(field)
+    if "answer" not in run or not str(run.get("answer") or "").strip():
+        missing.append("final_answer")
+    required_artifacts = ("runs_path", "report_path", "brief_path", "panel_path")
+    for field in required_artifacts:
+        value = artifacts.get(field) if artifacts else None
+        if not value or not Path(value).is_file():
+            missing.append(f"artifact.{field}")
+    return missing
+
+
+def _acceptance_recommendation(field: str) -> str:
+    if field.startswith("metadata."):
+        return f"Record {field} on the first production run after deployment."
+    if field.startswith("artifact."):
+        return f"Ensure TokenSaver can persist {field.removeprefix('artifact.')}."
+    if field.startswith("quality_signals"):
+        return "Record explicit quality signals for the production response."
+    if field == "final_answer":
+        return "Call record_final_answer() or provide a non-empty answer field."
+    return f"Record a valid {field} field in the production trace."
+
+
+def _default_health() -> dict[str, Any]:
+    return {
+        "status": "unknown",
+        "updated_at": "",
+        "last_success_trace_at": "",
+        "last_success_run_id": "",
+        "last_failure_at": "",
+        "last_error": None,
+        "failure_count": 0,
+        "consecutive_failure_count": 0,
+        "last_trace_write_latency_ms": 0,
+        "last_real_run_at": "",
+        "last_smoke_run_at": "",
+        "last_deployment_audit_at": "",
+        "deployment_acceptance": {},
+    }
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _traffic_suffix(traffic_type: str) -> str:
+    return {
+        TRAFFIC_PRODUCTION: "real",
+        TRAFFIC_SMOKE: "smoke",
+        TRAFFIC_DEPLOYMENT: "deployment",
+    }[traffic_type]
+
+
+def _traffic_label(traffic_type: str) -> str:
+    return {
+        TRAFFIC_PRODUCTION: "Real",
+        TRAFFIC_SMOKE: "Smoke",
+        TRAFFIC_DEPLOYMENT: "Deployment Audit",
+    }[traffic_type]
+
+
+def _failure_stage(exc: Exception) -> str:
+    stage = getattr(exc, "tokensaver_stage", None)
+    if stage:
+        return str(stage)
+    notes = getattr(exc, "__notes__", [])
+    for note in notes:
+        if str(note).startswith("tokensaver_stage="):
+            return str(note).split("=", 1)[1]
+    return "store_write"
+
+
+def _set_failure_stage(exc: Exception, stage: str) -> None:
+    try:
+        setattr(exc, "tokensaver_stage", stage)
+    except (AttributeError, TypeError):
+        pass
+
+
+def _percentile(values: list[int], percentile: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    index = min(round((len(ordered) - 1) * percentile), len(ordered) - 1)
+    return ordered[index]
+
+
+def _trend_group(key: tuple[str, ...], runs: list[dict[str, Any]]) -> dict[str, Any]:
+    input_tokens = [int(run.get("input_tokens") or 0) for run in runs]
+    output_tokens = [int(run.get("output_tokens") or 0) for run in runs]
+    latency = [int(run.get("latency_ms") or 0) for run in runs]
+    over_budget = 0
+    complete_quality = 0
+    finding_counts: dict[str, int] = {}
+    for run in runs:
+        diagnosis = run.get("diagnosis") or {}
+        budget = diagnosis.get("budget") or {}
+        if (
+            int(run.get("input_tokens") or 0) > int(budget.get("input_tokens") or 10**18)
+            or int(run.get("output_tokens") or 0) > int(budget.get("output_tokens") or 10**18)
+            or int(run.get("latency_ms") or 0) > int(budget.get("latency_ms") or 10**18)
+        ):
+            over_budget += 1
+        if isinstance(run.get("quality_signals"), dict) and run.get("quality_signals"):
+            complete_quality += 1
+        for code in diagnosis.get("finding_codes") or []:
+            finding_counts[str(code)] = finding_counts.get(str(code), 0) + 1
+    count = len(runs)
+    return {
+        "app": key[0],
+        "host_version": key[1],
+        "tokensaver_version": key[2],
+        "task_type": key[3],
+        "route": key[4],
+        "channel": key[5],
+        "traffic_type": key[6],
+        "runs": count,
+        "input_tokens": {"p50": _percentile(input_tokens, 0.50), "p95": _percentile(input_tokens, 0.95)},
+        "output_tokens": {"p50": _percentile(output_tokens, 0.50), "p95": _percentile(output_tokens, 0.95)},
+        "latency_ms": {"p50": _percentile(latency, 0.50), "p95": _percentile(latency, 0.95)},
+        "budget_exceeded_rate": round(over_budget / count, 3),
+        "quality_fields_retention_rate": round(complete_quality / count, 3),
+        "finding_codes": finding_counts,
+    }
 
 
 def compare_runs(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:

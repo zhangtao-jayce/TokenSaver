@@ -57,16 +57,28 @@ TokenSaver currently detects patterns such as:
 - slow tools, latency budget violations, and missing fallbacks
 - answers that are too long for the delivery channel
 - quality guardrail regressions during optimization
+- missing production trace fields and task classification conflicts
+- stale or failed trace persistence after deployment
+- smoke traffic accidentally presented as production ROI
 
 It writes:
 
 ```text
 .tokensaver/
   runs.jsonl
+  health.json
+  deployment.json
   reports/latest.md
+  reports/latest_real.md
+  reports/latest_smoke.md
   briefs/latest.md
+  briefs/latest_real.md
+  briefs/latest_smoke.md
+  index/latest_by_route.json
   panel/index.html
 ```
+
+`latest.md` and `panel/index.html` are production-only. Smoke tests and deployment audits have separate artifacts and never replace the latest real ROI report.
 
 ## Integrate With A Coding Agent
 
@@ -94,7 +106,15 @@ from tokensaver.integrations import trace_openai_chat_completion
 tokensaver = TokenSaver(app="my-agent", channel="chat")
 
 def handle_message(message: str) -> str:
-    with tokensaver.run(user_message=message) as run:
+    with tokensaver.run(
+        user_message=message,
+        traffic_type="production_user_run",
+        metadata={
+            "host_version": APP_VERSION,
+            "tokensaver_version": "0.6.1",
+            "environment": "production",
+        },
+    ) as run:
         run.set_task(task_type="quick_question", route="default")
         run.add_context("ticket", load_ticket(message), kind="crm")
 
@@ -105,8 +125,16 @@ def handle_message(message: str) -> str:
             messages=[{"role": "user", "content": message}],
         )
         answer = response.choices[0].message.content
+        run.add_quality_signal("answer_verified", True)
         run.record_final_answer(answer)
         return answer
+```
+
+Start a deployment acceptance cycle before releasing a new host version:
+
+```bash
+tokensaver mark-deployment --host-version 2.4.0 --environment production
+tokensaver health --json
 ```
 
 Dependency-free adapters are included for:
@@ -157,13 +185,16 @@ tokensaver open
 # Installation and environment checks
 tokensaver version --verbose
 tokensaver doctor
+tokensaver health --json
 tokensaver init-profile --template coding-agent
 
 # Record and inspect a run
 tokensaver record-run --file examples/run.json
 tokensaver latest --kind summary
+tokensaver latest --kind summary --traffic smoke
 tokensaver latest --kind brief
 tokensaver latest --kind panel
+tokensaver mark-deployment --host-version 2.4.0 --environment production
 
 # Analyze multiple runs
 tokensaver list --limit 20
@@ -211,6 +242,9 @@ Main tools include:
 
 - `tokensaver.plan_task`
 - `tokensaver.record_agent_run`
+- `tokensaver.get_latest`
+- `tokensaver.get_health`
+- `tokensaver.mark_deployment`
 - `tokensaver.diagnose_roi`
 - `tokensaver.generate_repair_brief`
 - `tokensaver.eval_fixtures`

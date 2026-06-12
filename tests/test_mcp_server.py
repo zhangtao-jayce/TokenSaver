@@ -16,6 +16,9 @@ class McpServerTests(unittest.TestCase):
         self.assertIn("tokensaver.eval_fixtures", names)
         self.assertIn("tokensaver.doctor", names)
         self.assertIn("tokensaver.verify_install", names)
+        self.assertIn("tokensaver.get_latest", names)
+        self.assertIn("tokensaver.get_health", names)
+        self.assertIn("tokensaver.mark_deployment", names)
 
     def test_plan_tool_call(self):
         response = handle_request(
@@ -173,6 +176,51 @@ class McpServerTests(unittest.TestCase):
             }
         )
         self.assertIn("@abc1234", command_response["result"]["content"][0]["text"])
+
+    def test_production_health_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            marker_response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 10,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "tokensaver.mark_deployment",
+                        "arguments": {
+                            "store_dir": tmp,
+                            "host_version": "2.4.0",
+                            "environment": "production",
+                        },
+                    },
+                }
+            )
+            self.assertIn('"status": "awaiting"', marker_response["result"]["content"][0]["text"])
+
+            health_response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "tokensaver.get_health",
+                        "arguments": {"store_dir": tmp},
+                    },
+                }
+            )
+            self.assertIn("no_real_run_after_deploy", health_response["result"]["content"][0]["text"])
+
+            latest_response = handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 12,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "tokensaver.get_latest",
+                        "arguments": {"store_dir": tmp, "traffic": "smoke"},
+                    },
+                }
+            )
+            self.assertIn('"traffic_type": "smoke_test"', latest_response["result"]["content"][0]["text"])
 
 
 if __name__ == "__main__":

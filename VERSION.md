@@ -1,8 +1,8 @@
 # Version Management
 
-Current version: `0.5.1`
+Current version: `0.6.1`
 
-Release date: 2026-06-03
+Release date: 2026-06-12
 
 ## Versioning Rule
 
@@ -33,6 +33,58 @@ Each release should record:
 - known limitations
 
 ## Current Release
+
+### 0.6.1
+
+Release date: 2026-06-12
+
+Release goal:
+
+Make TokenSaver a local production integration health and ROI diagnostic that separates real and test traffic, proves trace health, and validates the first real request after deployment.
+
+Iteration summary:
+
+TokenSaver `0.6.1` adds production/smoke/deployment traffic isolation, atomic cross-run health state, trace completeness findings, deployment acceptance, visible integration failure hooks, unified doctor/runtime health, production-health GUI modules, and version/traffic-isolated trend aggregation.
+
+Verification:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+python3 -m tokensaver.cli health --json
+```
+
+Expected result:
+
+```text
+Ran 85 tests
+OK
+```
+
+Compatibility notes:
+
+- New traces use schema `0.3`.
+- Legacy traces without `traffic_type` are treated as production, never smoke.
+- Existing `runs.jsonl` remains readable and append-only.
+- Generic latest artifacts are production-only after the first v0.6 write.
+
+### 0.6.0
+
+Release date: 2026-06-11
+
+Release goal:
+
+Make TokenSaver understandable and testable within 30 seconds, while establishing measurable open-source growth loops.
+
+Iteration summary:
+
+TokenSaver `0.6.0` introduced the deterministic demo, benchmark artifacts, anonymous share cards, case studies, packaging metadata, CI, release automation, and repository growth metrics.
+
+Compatibility notes:
+
+- Existing traces remain readable.
+- The demo uses deterministic synthetic fixtures.
+- Core diagnosis remains local and dependency-free.
 
 ### 0.5.1
 

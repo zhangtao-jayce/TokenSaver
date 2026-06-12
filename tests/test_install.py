@@ -1,8 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tokensaver import __version__
+from tokensaver import install
 from tokensaver.install import (
     build_upgrade_command,
     doctor,
@@ -56,6 +58,22 @@ class InstallExperienceTests(unittest.TestCase):
 
         self.assertIn("-m pip install", command)
         self.assertIn("@abc1234", command)
+
+    def test_metadata_commit_prefers_current_distribution_name(self):
+        current = mock.Mock()
+        current.files = [Path("tokensaver_agent-0.6.2.dist-info/direct_url.json")]
+        current.locate_file.return_value.read_text.return_value = (
+            '{"vcs_info":{"commit_id":"new5678abcdef"}}'
+        )
+        legacy = mock.Mock()
+
+        with mock.patch.object(
+            install.importlib.metadata,
+            "distribution",
+            side_effect=lambda name: current if name == "tokensaver-agent" else legacy,
+        ):
+            self.assertEqual(install._metadata_commit(), "new5678")
+            legacy.locate_file.assert_not_called()
 
 
 if __name__ == "__main__":

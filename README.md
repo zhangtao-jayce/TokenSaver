@@ -111,7 +111,7 @@ def handle_message(message: str) -> str:
         traffic_type="production_user_run",
         metadata={
             "host_version": APP_VERSION,
-            "tokensaver_version": "0.6.1",
+            "tokensaver_version": "0.6.2",
             "environment": "production",
         },
     ) as run:

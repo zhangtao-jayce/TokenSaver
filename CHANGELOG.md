@@ -2,6 +2,21 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.6.2 - 2026-06-12
+
+### Fixed
+
+- Prefer the current `tokensaver-agent` PEP 610 installation metadata when a legacy
+  `tokensaver` distribution remains installed, preventing false project pin mismatch
+  findings in production health checks.
+
+### Verification
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+```
+
 ## 0.6.1 - 2026-06-12
 
 ### Release Goal

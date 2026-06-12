@@ -1,6 +1,6 @@
 # Version Management
 
-Current version: `0.6.1`
+Current version: `0.6.2`
 
 Release date: 2026-06-12
 
@@ -33,6 +33,30 @@ Each release should record:
 - known limitations
 
 ## Current Release
+
+### 0.6.2
+
+Release date: 2026-06-12
+
+Release goal:
+
+Keep production health commit detection correct when legacy `tokensaver` and current `tokensaver-agent` distribution metadata coexist.
+
+Iteration summary:
+
+TokenSaver `0.6.2` makes PEP 610 commit detection prefer the current `tokensaver-agent` distribution while retaining compatibility with legacy installs.
+
+Verification:
+
+```bash
+python3 -m unittest discover -s tests
+python3 -m py_compile tokensaver/*.py
+```
+
+Compatibility notes:
+
+- No public API or trace schema changes.
+- Legacy `tokensaver` distribution metadata remains a fallback.
 
 ### 0.6.1
 

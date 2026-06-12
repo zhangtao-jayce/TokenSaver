@@ -373,19 +373,21 @@ def local_commit() -> str | None:
 
 
 def _metadata_commit() -> str | None:
-    try:
-        distribution = importlib.metadata.distribution("tokensaver")
-    except importlib.metadata.PackageNotFoundError:
-        return None
-    for file in distribution.files or []:
-        if str(file).endswith("direct_url.json"):
-            try:
-                text = (distribution.locate_file(file)).read_text(encoding="utf-8")
-            except OSError:
-                return None
-            payload = json.loads(text)
-            commit = ((payload.get("vcs_info") or {}).get("commit_id") or "").strip()
-            return commit[:7] if commit else None
+    for distribution_name in ("tokensaver-agent", "tokensaver"):
+        try:
+            distribution = importlib.metadata.distribution(distribution_name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        for file in distribution.files or []:
+            if str(file).endswith("direct_url.json"):
+                try:
+                    text = (distribution.locate_file(file)).read_text(encoding="utf-8")
+                except OSError:
+                    break
+                payload = json.loads(text)
+                commit = ((payload.get("vcs_info") or {}).get("commit_id") or "").strip()
+                if commit:
+                    return commit[:7]
     return None
 
 

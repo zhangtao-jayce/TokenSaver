@@ -69,3 +69,30 @@
 遗留事项：会话级理解、证据归因、实时 policy callback、隐私保留策略和工作流图不属于本版本，需另立 PRD。
 
 验证结果：0.7 专项测试 12 项通过，治理测试 3 项通过，全量测试 101 项通过，CLI/API smoke、语法、补丁及版本一致性检查全部通过。详细结果见 `TEST-20260622-002`。
+
+## DEV-20260622-003：提交并发布 TokenSaver 0.7.0
+
+- 日期：2026-06-22
+- 对应 PRD：`docs/governance/prds/PRD-20260622-003-v0.7-release.md`
+- 对应测试记录：`TEST-20260622-003`
+- 状态：成功
+- 发布版本：0.7.0
+- 变更范围：GitHub 提交、PR、CI、标签、Release、PyPI Trusted Publishing 和发行包验证
+
+实际结果：
+
+- 发布提交经 rebase 后通过 PR #10 合并到 `main`。
+- 合并提交为 `d58842080a7acacbf025efb5eee42988d0bae45c`。
+- 创建 `v0.7.0` 标签和 GitHub Release。
+- GitHub CI Python 3.10–3.13 矩阵及 benchmark 全部通过。
+- Trusted Publishing workflow `27958029885` 成功将 `tokensaver-agent==0.7.0` 发布到 PyPI。
+- 全新虚拟环境从 PyPI 安装、版本检查和离线 demo 均通过。
+
+发布决策与风险：
+
+- 使用 GitHub OIDC Trusted Publishing，不在本地处理或保存 PyPI token。
+- PyPI 版本不可覆盖，因此只有在 PR CI、构建和本地 wheel 验证通过后才触发正式发布。
+- Actions 中 Node.js 20 弃用警告未影响本次结果，后续应单独升级相关 action 大版本并建立小 PRD。
+- Goldfinger 升级必须精确 pin `tokensaver-agent==0.7.0`；如验收失败，回退到 `0.6.2`。
+
+验证结果：完整发布 SOP 全部通过，详细证据见 `TEST-20260622-003`。

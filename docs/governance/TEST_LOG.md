@@ -61,7 +61,7 @@
 - 日期：2026-06-22
 - 对应 PRD：`PRD-20260622-003-v0.7-release.md`
 - 环境：macOS，Python 3，本地隔离构建环境与临时虚拟环境
-- 阶段结果：发布候选通过；GitHub CI 与 PyPI 验证待发布后补录
+- 总体结果：通过
 
 执行结果：
 
@@ -76,4 +76,22 @@
 7. 安装后 `tokensaver version`：返回 `TokenSaver 0.7.0`。
 8. 安装后离线 demo：通过，结果 `ACCEPTED`。
 
-阶段结论：本地发布候选满足提交和创建 PR 的条件。GitHub CI、标签、Trusted Publishing 及 PyPI 隔离安装将在外部发布完成后追加记录。
+9. PR #10 自动 CI：通过。
+   - Python 3.10、3.11、3.12、3.13 全部成功。
+   - benchmark workflow 成功。
+   - CI run：`27957511219`；benchmark run：`27957511217`。
+10. PR 合并：通过。
+    - PR：`https://github.com/zhangtao-jayce/TokenSaver/pull/10`
+    - merge commit：`d58842080a7acacbf025efb5eee42988d0bae45c`
+11. GitHub Release 与标签：通过。
+    - `https://github.com/zhangtao-jayce/TokenSaver/releases/tag/v0.7.0`
+12. Trusted Publishing：通过。
+    - workflow run：`27958029885`
+    - build 和 `publish-pypi` 两项 job 均成功。
+    - Actions 报告 Node.js 20 action runtime 弃用警告，但 runner 自动使用 Node.js 24，未影响发布。
+13. 全新临时虚拟环境从 PyPI 精确安装：通过。
+    - 下载 `tokensaver_agent-0.7.0-py3-none-any.whl`。
+    - `tokensaver version` 返回 `TokenSaver 0.7.0`。
+    - 安装后的离线 demo 返回 `ACCEPTED`。
+
+结论：TokenSaver 0.7.0 已通过本地、GitHub CI、构建、Trusted Publishing 和 PyPI 安装全链路验证，发布成功。

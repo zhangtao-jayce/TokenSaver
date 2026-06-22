@@ -22,10 +22,12 @@ STANDARD_RUN_FIELDS = [
     "task_type",
     "route",
     "metadata",
+    "request_id",
     "context_items",
     "tool_calls",
     "model_calls",
     "answer",
+    "token_usage",
     "quality_signals",
 ]
 
@@ -72,12 +74,14 @@ def trace_openai_chat_completion(
     response = client.chat.completions.create(model=model, messages=messages, **create_kwargs)
     latency_ms = int((time.time() - started) * 1000)
     output_text = extract_response_text(response)
+    usage = extract_token_usage(response)
     run.record_model_call(
         model=model,
         input_text=messages_to_text(messages),
         output_text=output_text,
         latency_ms=latency_ms,
         metadata=_merge_metadata(metadata, {"provider": "openai", "api": "chat.completions"}),
+        **usage,
     )
     return response
 
@@ -96,12 +100,14 @@ def trace_openai_response(
     started = time.time()
     response = client.responses.create(model=model, input=input, **create_kwargs)
     latency_ms = int((time.time() - started) * 1000)
+    usage = extract_token_usage(response)
     run.record_model_call(
         model=model,
         input_text=_value_to_text(input),
         output_text=extract_response_text(response),
         latency_ms=latency_ms,
         metadata=_merge_metadata(metadata, {"provider": "openai", "api": "responses"}),
+        **usage,
     )
     return response
 
@@ -120,12 +126,14 @@ def trace_anthropic_message(
     started = time.time()
     response = client.messages.create(model=model, messages=messages, **create_kwargs)
     latency_ms = int((time.time() - started) * 1000)
+    usage = extract_token_usage(response)
     run.record_model_call(
         model=model,
         input_text=messages_to_text(messages),
         output_text=extract_response_text(response),
         latency_ms=latency_ms,
         metadata=_merge_metadata(metadata, {"provider": "anthropic", "api": "messages"}),
+        **usage,
     )
     return response
 
@@ -144,12 +152,14 @@ def trace_litellm_completion(
     started = time.time()
     response = completion(model=model, messages=messages, **completion_kwargs)
     latency_ms = int((time.time() - started) * 1000)
+    usage = extract_token_usage(response)
     run.record_model_call(
         model=model,
         input_text=messages_to_text(messages),
         output_text=extract_response_text(response),
         latency_ms=latency_ms,
         metadata=_merge_metadata(metadata, {"provider": "litellm", "api": "completion"}),
+        **usage,
     )
     return response
 
@@ -334,6 +344,43 @@ def extract_response_text(response: Any) -> str:
         return "\n".join(text for text in texts if text)
 
     return _value_to_text(response)
+
+
+def extract_token_usage(response: Any) -> dict[str, Any]:
+    """Normalize common provider usage objects for ``record_model_call``."""
+
+    usage = _get_attr_or_key(response, "usage")
+    if not usage:
+        usage = _get_attr_or_key(response, "usage_metadata")
+    if not usage:
+        return {}
+    input_tokens = _first_usage_value(usage, "input_tokens", "prompt_tokens")
+    output_tokens = _first_usage_value(usage, "output_tokens", "completion_tokens")
+    details = _get_attr_or_key(usage, "output_tokens_details") or _get_attr_or_key(
+        usage, "completion_tokens_details"
+    )
+    reasoning_tokens = _first_usage_value(details, "reasoning_tokens") if details else None
+    normalized: dict[str, Any] = {
+        "usage_source": "provider" if input_tokens is not None and output_tokens is not None else "mixed"
+    }
+    if input_tokens is not None:
+        normalized["input_tokens"] = input_tokens
+    if output_tokens is not None:
+        normalized["output_tokens"] = output_tokens
+    if reasoning_tokens is not None:
+        normalized["reasoning_tokens"] = reasoning_tokens
+    return normalized
+
+
+def _first_usage_value(value: Any, *keys: str) -> int | None:
+    for key in keys:
+        item = _get_attr_or_key(value, key)
+        if item is not None:
+            try:
+                return int(item)
+            except (TypeError, ValueError):
+                continue
+    return None
 
 
 def _merge_metadata(base: dict[str, Any] | None, extra: dict[str, Any]) -> dict[str, Any]:

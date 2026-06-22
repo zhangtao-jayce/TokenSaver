@@ -54,7 +54,7 @@ class IntegrationHelperTests(unittest.TestCase):
         else:
             os.environ["TOKENSAVER_CHECK_UPDATE_ON_RUN"] = self._old_update_env
 
-    def test_standard_run_fields_match_v06_schema_contract(self):
+    def test_standard_run_fields_match_v07_schema_contract(self):
         self.assertEqual(
             STANDARD_RUN_FIELDS,
             [
@@ -65,10 +65,12 @@ class IntegrationHelperTests(unittest.TestCase):
                 "task_type",
                 "route",
                 "metadata",
+                "request_id",
                 "context_items",
                 "tool_calls",
                 "model_calls",
                 "answer",
+                "token_usage",
                 "quality_signals",
             ],
         )

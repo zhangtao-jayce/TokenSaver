@@ -111,7 +111,7 @@ def handle_message(message: str) -> str:
         traffic_type="production_user_run",
         metadata={
             "host_version": APP_VERSION,
-            "tokensaver_version": "0.6.2",
+            "tokensaver_version": "0.7.0",
             "environment": "production",
         },
     ) as run:
@@ -157,6 +157,40 @@ tokensaver compare \
 ```
 
 TokenSaver reports token, latency, ROI score, resolved findings, new findings, and quality blockers. An optimization is rejected when it introduces tracked quality regressions.
+
+Compare two host versions across equivalent task and route groups:
+
+```bash
+tokensaver compare \
+  --baseline host-version-A \
+  --candidate host-version-B \
+  --group-by task_type,route \
+  --last 500
+```
+
+Each group reports sample size, P50/P95 model input/output and latency, average tool calls, quality-signal retention, and a conservative conclusion. Groups with fewer than three runs per version are marked `insufficient_data`.
+
+## Trustworthy Token Accounting
+
+Schema 0.4 separates model billing from Agent data flow under `token_usage`:
+
+- `billed_model_input_tokens` and `billed_model_output_tokens`
+- `tool_payload_tokens` and `tool_schema_tokens`
+- `final_answer_tokens` and provider-reported `reasoning_tokens`
+- estimated `repeated_context_tokens`
+- `source`: provider, estimated, or mixed
+
+New SDK traces no longer add tool output or a duplicate final answer into model `output_tokens`. Provider usage is preferred when an integration response exposes it.
+
+For traffic-aware production health, register a request before tracing when the host entrypoint is observable:
+
+```python
+request_id = tokensaver.record_host_request()
+with tokensaver.run(user_message=message, request_id=request_id) as run:
+    ...
+```
+
+This distinguishes `idle_no_traffic` from `trace_pipeline_broken`.
 
 Generate a public Markdown report and anonymous SVG card directly from two run files:
 

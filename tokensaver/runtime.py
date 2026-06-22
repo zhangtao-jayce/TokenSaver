@@ -51,6 +51,7 @@ class TokenSaver:
         route: str | None = None,
         metadata: dict[str, Any] | None = None,
         traffic_type: str = TRAFFIC_PRODUCTION,
+        request_id: str | None = None,
     ) -> "AgentRun":
         try:
             return AgentRun(
@@ -60,6 +61,7 @@ class TokenSaver:
                 route=route,
                 metadata=metadata or {},
                 traffic_type=traffic_type,
+                request_id=request_id,
             )
         except Exception as exc:
             self._report_failure(
@@ -70,6 +72,18 @@ class TokenSaver:
                 }
             )
             raise
+
+    def record_host_request(self, *, request_id: str | None = None) -> str:
+        """Register a host request before tracing starts.
+
+        Hosts that can observe their request entrypoint should call this before
+        creating an AgentRun. Passing the returned id to ``run`` lets health
+        distinguish idle traffic from an untraced request.
+        """
+
+        active_request_id = request_id or str(uuid.uuid4())
+        self.store.record_host_request(active_request_id)
+        return active_request_id
 
     def mark_deployment(
         self,
@@ -116,12 +130,13 @@ class AgentRun:
         route: str | None,
         metadata: dict[str, Any],
         traffic_type: str,
+        request_id: str | None,
     ) -> None:
         self._tokensaver = tokensaver
         self._started = time.time()
         inferred_task_type = classify_task(user_message).task_type
         self._run: dict[str, Any] = {
-            "schema_version": "0.3",
+            "schema_version": "0.4",
             "run_id": str(uuid.uuid4()),
             "app": tokensaver.app,
             "channel": tokensaver.channel,
@@ -141,8 +156,13 @@ class AgentRun:
             "answer": "",
             "answer_tokens": 0,
             "started_at": self._started,
+            "request_id": request_id or "",
         }
         self.result: dict[str, Any] | None = None
+        self._tokensaver.store.record_trace_started(
+            run_id=str(self._run["run_id"]),
+            request_id=request_id,
+        )
 
     def __enter__(self) -> "AgentRun":
         return self
@@ -199,10 +219,14 @@ class AgentRun:
         cached: bool = False,
         status: str = "ok",
         metadata: dict[str, Any] | None = None,
+        transport_success: bool | None = None,
+        semantic_success: bool | None = None,
+        result_quality: str | float | None = None,
+        error_type: str | None = None,
+        fallback_used: bool = False,
     ) -> None:
         try:
-            self._run["tool_calls"].append(
-                {
+            call = {
                     "name": name,
                     "input_tokens": estimate_tokens(input_text),
                     "output_tokens": estimate_tokens(output_text),
@@ -210,8 +234,17 @@ class AgentRun:
                     "cached": cached,
                     "status": status,
                     "metadata": metadata or {},
+                    "fallback_used": bool(fallback_used),
                 }
-            )
+            if transport_success is not None:
+                call["transport_success"] = bool(transport_success)
+            if semantic_success is not None:
+                call["semantic_success"] = bool(semantic_success)
+            if result_quality is not None:
+                call["result_quality"] = result_quality
+            if error_type:
+                call["error_type"] = error_type
+            self._run["tool_calls"].append(call)
         except Exception as exc:
             self._trace_failure("tool_trace", exc)
             raise
@@ -224,13 +257,29 @@ class AgentRun:
         output_text: str,
         latency_ms: int = 0,
         metadata: dict[str, Any] | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        reasoning_tokens: int = 0,
+        tool_schema_tokens: int = 0,
+        usage_source: str | None = None,
     ) -> None:
         try:
+            measured_input = int(input_tokens) if input_tokens is not None else estimate_tokens(input_text)
+            measured_output = int(output_tokens) if output_tokens is not None else estimate_tokens(output_text)
             self._run["model_calls"].append(
                 {
                     "model": model,
-                    "input_tokens": estimate_tokens(input_text),
-                    "output_tokens": estimate_tokens(output_text),
+                    "input_tokens": measured_input,
+                    "output_tokens": measured_output,
+                    "reasoning_tokens": int(reasoning_tokens),
+                    "tool_schema_tokens": int(tool_schema_tokens),
+                    "usage_source": usage_source or (
+                        "provider"
+                        if input_tokens is not None and output_tokens is not None
+                        else "estimated"
+                        if input_tokens is None and output_tokens is None
+                        else "mixed"
+                    ),
                     "latency_ms": latency_ms,
                     "metadata": metadata or {},
                 }
@@ -269,12 +318,24 @@ class AgentRun:
             self._run["latency_ms"] = int((ended - self._started) * 1000)
             self._run["input_tokens"] = _sum_input_tokens(self._run)
             self._run["output_tokens"] = _sum_output_tokens(self._run)
+            self._run["token_usage"] = _build_token_usage(self._run)
             self._run["diagnosis"] = diagnose_run(self._run, profile=self._tokensaver.profile)
             artifacts = self._tokensaver.store.save_run(self._run)
             self._run["artifacts"] = artifacts
             self.result = self._run
+            self._tokensaver.store.record_trace_finished(
+                run_id=str(self._run.get("run_id") or ""),
+                request_id=str(self._run.get("request_id") or "") or None,
+            )
             return self._run
         except Exception as exc:
+            try:
+                self._tokensaver.store.record_trace_finished(
+                    run_id=str(self._run.get("run_id") or ""),
+                    request_id=str(self._run.get("request_id") or "") or None,
+                )
+            except Exception:
+                pass
             self._tokensaver._report_failure(
                 {
                     "stage": "finish",
@@ -314,10 +375,18 @@ def record_agent_run(
     _normalize_context_items(normalized)
     _normalize_tool_calls(normalized)
     _normalize_model_calls(normalized)
+    supplied_usage = normalized.get("token_usage") or {}
+    if "input_tokens" not in normalized and "billed_model_input_tokens" in supplied_usage:
+        normalized["input_tokens"] = int(supplied_usage.get("billed_model_input_tokens") or 0)
+    if "output_tokens" not in normalized and "billed_model_output_tokens" in supplied_usage:
+        normalized["output_tokens"] = int(supplied_usage.get("billed_model_output_tokens") or 0)
+    if "answer_tokens" not in normalized and "final_answer_tokens" in supplied_usage:
+        normalized["answer_tokens"] = int(supplied_usage.get("final_answer_tokens") or 0)
     if "answer_tokens" not in normalized and normalized.get("answer"):
         normalized["answer_tokens"] = estimate_tokens(str(normalized.get("answer") or ""))
     normalized.setdefault("input_tokens", _sum_input_tokens(normalized))
     normalized.setdefault("output_tokens", _sum_output_tokens(normalized))
+    normalized.setdefault("token_usage", _build_token_usage(normalized))
     active_profile = profile or load_profile(profile_path)
     normalized["diagnosis"] = diagnose_run(normalized, profile=active_profile)
     reporter = _build_failure_reporter(failure_callback=failure_callback, logger=logger)
@@ -349,18 +418,59 @@ def read_health(*, store_dir: str | Path = ".tokensaver") -> dict[str, Any]:
 
 
 def _sum_input_tokens(run: dict[str, Any]) -> int:
+    model_calls = run.get("model_calls") or []
+    if model_calls:
+        return sum(int(call.get("input_tokens") or 0) for call in model_calls)
     total = estimate_tokens(str(run.get("user_message") or ""))
     total += sum(int(item.get("tokens") or 0) for item in run.get("context_items") or [])
-    total += sum(int(call.get("input_tokens") or 0) for call in run.get("tool_calls") or [])
-    total += sum(int(call.get("input_tokens") or 0) for call in run.get("model_calls") or [])
     return total
 
 
 def _sum_output_tokens(run: dict[str, Any]) -> int:
-    total = int(run.get("answer_tokens") or 0)
-    total += sum(int(call.get("output_tokens") or 0) for call in run.get("tool_calls") or [])
-    total += sum(int(call.get("output_tokens") or 0) for call in run.get("model_calls") or [])
-    return total
+    model_calls = run.get("model_calls") or []
+    if model_calls:
+        return sum(int(call.get("output_tokens") or 0) for call in model_calls)
+    return int(run.get("answer_tokens") or 0)
+
+
+def _build_token_usage(run: dict[str, Any]) -> dict[str, Any]:
+    model_calls = list(run.get("model_calls") or [])
+    sources = {str(call.get("usage_source") or "estimated") for call in model_calls}
+    if not sources:
+        source = "estimated"
+    elif sources == {"provider"}:
+        source = "provider"
+    elif len(sources) == 1:
+        source = next(iter(sources))
+    else:
+        source = "mixed"
+    model_call_count = len(model_calls)
+    repeated_context = sum(
+        int(item.get("tokens") or 0) * max(model_call_count - 1, 0)
+        for item in run.get("context_items") or []
+        if int(item.get("tokens") or 0) > 0
+    )
+    return {
+        "billed_model_input_tokens": (
+            sum(int(call.get("input_tokens") or 0) for call in model_calls)
+            if model_calls
+            else int(run.get("input_tokens") or 0)
+        ),
+        "billed_model_output_tokens": (
+            sum(int(call.get("output_tokens") or 0) for call in model_calls)
+            if model_calls
+            else int(run.get("output_tokens") or 0)
+        ),
+        "tool_payload_tokens": sum(
+            int(call.get("input_tokens") or 0) + int(call.get("output_tokens") or 0)
+            for call in run.get("tool_calls") or []
+        ),
+        "final_answer_tokens": int(run.get("answer_tokens") or 0),
+        "reasoning_tokens": sum(int(call.get("reasoning_tokens") or 0) for call in model_calls),
+        "repeated_context_tokens": repeated_context,
+        "tool_schema_tokens": sum(int(call.get("tool_schema_tokens") or 0) for call in model_calls),
+        "source": source,
+    }
 
 
 def _normalize_context_items(run: dict[str, Any]) -> None:

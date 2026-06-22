@@ -2,15 +2,26 @@
 
 ## Current Schema
 
-TokenSaver v0.6 writes new traces with `schema_version: "0.3"`.
+TokenSaver v0.7 writes new SDK traces with `schema_version: "0.4"`.
 
 Additive fields:
 
-- `traffic_type`
-- `caller_task_type`
-- `inferred_task_type`
-- tool call `status`
-- deployment metadata under `metadata`
+- `request_id`
+- `token_usage`
+- model call `reasoning_tokens`, `tool_schema_tokens`, and `usage_source`
+- tool call `transport_success`, `semantic_success`, `result_quality`, `error_type`, and `fallback_used`
+
+`token_usage` separates:
+
+- billed model input and output
+- tool payload and tool schema tokens
+- final-answer tokens
+- provider-reported reasoning tokens
+- estimated repeated-context tokens
+
+For schema 0.4 SDK traces, top-level `input_tokens` and `output_tokens` mean model input and model output totals. They do not add tool payloads or a duplicate final answer. Schema 0.3 traces retain their recorded historical values.
+
+Externally supplied traces without `schema_version` continue to default to schema 0.3 so TokenSaver does not silently reinterpret historical aggregation semantics.
 
 ## Traffic Compatibility
 
@@ -29,6 +40,14 @@ Legacy traces without `traffic_type` are read as `production_user_run`. They are
 - `health.json`, `deployment.json`, and `index/latest_by_route.json` are additive and can be deleted and rebuilt through later runs.
 - Generic `reports/latest.md`, `briefs/latest.md`, and `panel/index.html` are production-only after the first v0.6 write.
 - Smoke and deployment-audit artifacts use separate names and never replace production latest artifacts.
+
+## Health Compatibility
+
+Schema 0.7 runtime health adds host-request and trace start/finish timestamps plus an untraced-request count. Old health documents without traffic-aware fields retain legacy `trace_stale` behavior. New health documents distinguish `idle_no_traffic` from `trace_pipeline_broken`.
+
+## Cross-Schema Comparison
+
+Version-group comparison reports the schema distribution for each version. When schema 0.3 and 0.4 are mixed, output includes a compatibility warning because the historical top-level token aggregation semantics differ.
 
 ## Completeness Semantics
 

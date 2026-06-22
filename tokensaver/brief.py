@@ -39,6 +39,20 @@ def generate_run_summary(
                 f"- latency_ms: {budget.get('latency_ms', '')}",
             ]
         )
+    token_usage = run.get("token_usage") or {}
+    if token_usage:
+        lines.extend(["", "## Token Breakdown", ""])
+        for field in (
+            "billed_model_input_tokens",
+            "billed_model_output_tokens",
+            "tool_payload_tokens",
+            "final_answer_tokens",
+            "reasoning_tokens",
+            "repeated_context_tokens",
+            "tool_schema_tokens",
+            "source",
+        ):
+            lines.append(f"- {field}: {token_usage.get(field, 0)}")
     dimensions = diagnosis.get("dimensions") or {}
     if dimensions:
         lines.extend(["", "## ROI Dimensions"])
@@ -108,6 +122,18 @@ def generate_repair_brief(
         f"- latency_ms: {run.get('latency_ms', 0)}",
         f"- roi_score: {diagnosis.get('roi_score', 100)}",
     ]
+
+    token_usage = run.get("token_usage") or {}
+    if token_usage:
+        lines.extend(
+            [
+                f"- tool_payload_tokens: {token_usage.get('tool_payload_tokens', 0)}",
+                f"- final_answer_tokens: {token_usage.get('final_answer_tokens', 0)}",
+                f"- repeated_context_tokens: {token_usage.get('repeated_context_tokens', 0)}",
+                f"- tool_schema_tokens: {token_usage.get('tool_schema_tokens', 0)}",
+                f"- token_usage_source: {token_usage.get('source', 'estimated')}",
+            ]
+        )
 
     consumers = diagnosis.get("top_token_consumers") or []
     if consumers:

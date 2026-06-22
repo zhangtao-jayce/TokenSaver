@@ -29,6 +29,7 @@ from .store import (
     TRAFFIC_PRODUCTION,
     TRAFFIC_SMOKE,
     LocalStore,
+    compare_run_groups,
     normalize_traffic_type,
 )
 from .tokenizer import estimate_tokens
@@ -161,9 +162,14 @@ def main(argv: list[str] | None = None) -> int:
     brief_latest_parser.add_argument("--store-dir", default=".tokensaver")
     brief_latest_parser.add_argument("--profile", help="Re-diagnose the run with this profile.")
 
-    compare_parser = subparsers.add_parser("compare", help="Compare two recorded runs.")
-    compare_parser.add_argument("--before", required=True)
-    compare_parser.add_argument("--after", required=True)
+    compare_parser = subparsers.add_parser("compare", help="Compare two runs or two host-version groups.")
+    compare_parser.add_argument("--before")
+    compare_parser.add_argument("--after")
+    compare_parser.add_argument("--baseline")
+    compare_parser.add_argument("--candidate")
+    compare_parser.add_argument("--group-by", default="task_type,route")
+    compare_parser.add_argument("--last", type=int, default=500)
+    compare_parser.add_argument("--minimum-sample-size", type=int, default=3)
     compare_parser.add_argument("--store-dir", default=".tokensaver")
     compare_parser.add_argument("--profile", help="Re-diagnose both runs with this profile before comparing.")
 
@@ -463,7 +469,27 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "compare":
         store = LocalStore(args.store_dir)
-        if args.profile:
+        pair_mode = bool(args.before or args.after)
+        group_mode = bool(args.baseline or args.candidate)
+        if pair_mode and group_mode:
+            raise SystemExit("Use either --before/--after or --baseline/--candidate, not both.")
+        if group_mode:
+            if not args.baseline or not args.candidate:
+                raise SystemExit("--baseline and --candidate must be provided together.")
+            fields = [field.strip() for field in args.group_by.split(",") if field.strip()]
+            try:
+                result = compare_run_groups(
+                    store.load_runs(limit=args.last),
+                    baseline=args.baseline,
+                    candidate=args.candidate,
+                    group_by=fields,
+                    minimum_sample_size=max(args.minimum_sample_size, 1),
+                )
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+        elif not args.before or not args.after:
+            raise SystemExit("Provide --before/--after or --baseline/--candidate.")
+        elif args.profile:
             before = _diagnose_with_profile(_require_run(store.find_run(args.before), args.before), args.profile)
             after = _diagnose_with_profile(_require_run(store.find_run(args.after), args.after), args.profile)
             from .store import compare_runs

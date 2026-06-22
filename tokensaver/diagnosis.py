@@ -38,9 +38,10 @@ def diagnose_run(run: dict[str, Any], *, profile: dict[str, Any] | None = None) 
     task_type = str(run.get("task_type") or "unknown")
     route = str(run.get("route") or "")
     channel = str(run.get("channel") or "").lower()
-    input_tokens = int(run.get("input_tokens") or 0)
-    output_tokens = int(run.get("output_tokens") or 0)
-    answer_tokens = int(run.get("answer_tokens") or 0)
+    token_usage = run.get("token_usage") or {}
+    input_tokens = int(token_usage.get("billed_model_input_tokens", run.get("input_tokens")) or 0)
+    output_tokens = int(token_usage.get("billed_model_output_tokens", run.get("output_tokens")) or 0)
+    answer_tokens = int(token_usage.get("final_answer_tokens", run.get("answer_tokens")) or 0)
     latency_ms = int(run.get("latency_ms") or 0)
     context_items = list(run.get("context_items") or [])
     tool_calls = list(run.get("tool_calls") or [])
@@ -187,6 +188,7 @@ def diagnose_run(run: dict[str, Any], *, profile: dict[str, Any] | None = None) 
         profile=profile,
     )
     _add_tool_findings(findings, tool_calls, input_tokens, profile=profile)
+    _add_tool_surface_findings(findings, run, profile=profile)
     _add_latency_tool_findings(
         findings,
         tool_calls,
@@ -237,10 +239,27 @@ def diagnose_health(
     stale_after_seconds: int = 86_400,
 ) -> list[dict[str, Any]]:
     findings: list[DiagnosisFinding] = []
+    untraced = int(health.get("untraced_request_count") or 0)
+    traffic_aware = "last_host_request_at" in health
+    if untraced > 0:
+        findings.append(
+            DiagnosisFinding(
+                code="trace_pipeline_broken",
+                severity="high",
+                message="Host requests were observed without corresponding trace starts.",
+                evidence={
+                    "untraced_request_count": untraced,
+                    "last_host_request_at": health.get("last_host_request_at"),
+                    "last_trace_started_at": health.get("last_trace_started_at"),
+                },
+                recommendation="Verify that every host request enters TokenSaver.run() and passes the registered request_id.",
+                owner_area="integration/runtime",
+            )
+        )
     last_real = _parse_datetime(health.get("last_real_run_at"))
     if last_real is not None:
         age_seconds = int((datetime.now(timezone.utc) - last_real).total_seconds())
-        if age_seconds > stale_after_seconds:
+        if age_seconds > stale_after_seconds and not traffic_aware:
             findings.append(
                 DiagnosisFinding(
                     code="trace_stale",
@@ -251,6 +270,24 @@ def diagnose_health(
                     owner_area="integration/runtime",
                 )
             )
+        elif age_seconds > stale_after_seconds and untraced == 0:
+            last_host = _parse_datetime(health.get("last_host_request_at"))
+            last_finished = _parse_datetime(health.get("last_trace_finished_at"))
+            if last_host is None or (last_finished is not None and last_host <= last_finished):
+                findings.append(
+                    DiagnosisFinding(
+                        code="idle_no_traffic",
+                        severity="info",
+                        message="Production traces are old, but no newer host traffic is waiting to be traced.",
+                        evidence={
+                            "last_real_run_at": health.get("last_real_run_at"),
+                            "last_host_request_at": health.get("last_host_request_at"),
+                            "age_seconds": age_seconds,
+                        },
+                        recommendation="No tracing repair is required unless host traffic resumes without traces.",
+                        owner_area="integration/runtime",
+                    )
+                )
     acceptance = health.get("deployment_acceptance") or {}
     if acceptance.get("status") == "awaiting":
         findings.append(
@@ -597,6 +634,62 @@ def _add_tool_findings(
             )
 
 
+def _add_tool_surface_findings(
+    findings: list[DiagnosisFinding],
+    run: dict[str, Any],
+    *,
+    profile: dict[str, Any],
+) -> None:
+    thresholds = dict(profile.get("thresholds") or {})
+    token_usage = run.get("token_usage") or {}
+    schema_tokens = int(token_usage.get("tool_schema_tokens") or 0)
+    schema_threshold = int(thresholds.get("large_tool_schema_tokens") or 4_000)
+    model_calls = list(run.get("model_calls") or [])
+    exposed_counts = [
+        int((call.get("metadata") or {}).get("exposed_tool_count") or 0)
+        for call in model_calls
+    ]
+    exposed_count = max(exposed_counts, default=0)
+    used_count = len({str(call.get("name") or "") for call in run.get("tool_calls") or [] if call.get("name")})
+    precision = round(used_count / exposed_count, 3) if exposed_count else None
+    if schema_tokens >= schema_threshold:
+        findings.append(
+            DiagnosisFinding(
+                code="oversized_tool_surface",
+                severity="high",
+                message="Tool schemas consume a large amount of model input context.",
+                evidence={
+                    "tool_schema_tokens": schema_tokens,
+                    "exposed_tool_count": exposed_count or None,
+                    "used_tool_count": used_count,
+                    "route_tool_precision": precision,
+                },
+                recommendation="Expose only route-relevant tools and replace full schemas with a smaller routed tool set.",
+                owner_area="tool/router",
+                impact="Unused tool schemas are billed on model calls even when the tools are never invoked.",
+            )
+        )
+    min_exposed = int(thresholds.get("large_tool_surface_count") or 10)
+    min_precision = float(thresholds.get("route_tool_precision") or 0.25)
+    if exposed_count >= min_exposed and precision is not None and precision < min_precision:
+        findings.append(
+            DiagnosisFinding(
+                code="unused_tool_schema_cost",
+                severity="medium",
+                message="The route exposed many more tools than it used.",
+                evidence={
+                    "exposed_tool_count": exposed_count,
+                    "used_tool_count": used_count,
+                    "route_tool_precision": precision,
+                    "estimated_unused_tool_schema_tokens": round(schema_tokens * (1 - precision)),
+                },
+                recommendation="Route first, then attach the smallest tool schema set needed by that route.",
+                owner_area="tool/router",
+                impact="Low tool-surface precision wastes context and can reduce tool-selection accuracy.",
+            )
+        )
+
+
 def _add_latency_tool_findings(
     findings: list[DiagnosisFinding],
     tool_calls: list[dict[str, Any]],
@@ -631,7 +724,10 @@ def _add_latency_tool_findings(
                     impact="Slow low-value tools dominate latency without improving the final answer enough.",
                 )
             )
-        success = metadata.get("success", call.get("success"))
+        success = metadata.get(
+            "transport_success",
+            metadata.get("success", call.get("transport_success", call.get("success"))),
+        )
         semantic_success = metadata.get("semantic_success", call.get("semantic_success"))
         if semantic_success is False or (
             success is True and call_latency >= slow_tool_ms and output_tokens <= low_value_output_tokens

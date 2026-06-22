@@ -2,6 +2,36 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.7.0 - 2026-06-22
+
+### Added
+
+- Schema 0.4 `token_usage` breakdown for billed model, tool payload, final answer, reasoning, repeated context, and tool schema tokens.
+- Provider usage normalization for OpenAI-, Anthropic-, and LiteLLM-compatible responses.
+- First-class tool transport/semantic outcome fields.
+- `oversized_tool_surface` and `unused_tool_schema_cost` findings.
+- Host request and trace lifecycle health with `idle_no_traffic` and `trace_pipeline_broken` diagnoses.
+- Baseline/candidate host-version comparison grouped by task, route, channel, or app.
+- Conservative insufficient-sample reporting and cross-schema compatibility warnings.
+
+### Changed
+
+- New SDK traces use schema 0.4.
+- New SDK `input_tokens` and `output_tokens` represent model totals and no longer add tool payloads or a duplicate final answer.
+- Run summaries expose the token breakdown.
+
+### Compatibility
+
+- Schema 0.3 traces and existing two-run comparisons remain supported.
+- No new runtime dependency was added.
+
+### Verification
+
+- 12 TokenSaver 0.7 tests passed.
+- 3 governance tests passed.
+- 101 full-suite tests passed.
+- Python compilation, CLI/API smoke, diff check, and version consistency passed.
+
 ## 0.6.2 - 2026-06-12
 
 ### Fixed

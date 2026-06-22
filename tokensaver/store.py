@@ -245,6 +245,66 @@ class LocalStore:
                 print(f"TokenSaver failure callback failed: {exc}", file=sys.stderr)
         return health
 
+    def record_host_request(self, request_id: str) -> dict[str, Any]:
+        """Record a host request that has not entered tracing yet."""
+
+        health = self.read_health()
+        pending = [str(item) for item in health.get("pending_request_ids") or []]
+        if request_id not in pending:
+            pending.append(request_id)
+        health.update(
+            {
+                "updated_at": _utc_now(),
+                "last_host_request_at": _utc_now(),
+                "pending_request_ids": pending[-1000:],
+                "untraced_request_count": len(pending[-1000:]),
+            }
+        )
+        self._ensure_dirs()
+        self._atomic_write_json(self.health_path, health)
+        return health
+
+    def record_trace_started(self, *, run_id: str, request_id: str | None = None) -> dict[str, Any]:
+        health = self.read_health()
+        pending = [str(item) for item in health.get("pending_request_ids") or []]
+        if request_id and request_id in pending:
+            pending.remove(request_id)
+        health.update(
+            {
+                "updated_at": _utc_now(),
+                "last_trace_started_at": _utc_now(),
+                "last_trace_started_run_id": run_id,
+                "pending_request_ids": pending,
+                "untraced_request_count": len(pending),
+            }
+        )
+        self._ensure_dirs()
+        self._atomic_write_json(self.health_path, health)
+        return health
+
+    def record_trace_finished(
+        self,
+        *,
+        run_id: str,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        health = self.read_health()
+        pending = [str(item) for item in health.get("pending_request_ids") or []]
+        if request_id and request_id in pending:
+            pending.remove(request_id)
+        health.update(
+            {
+                "updated_at": _utc_now(),
+                "last_trace_finished_at": _utc_now(),
+                "last_trace_finished_run_id": run_id,
+                "pending_request_ids": pending,
+                "untraced_request_count": len(pending),
+            }
+        )
+        self._ensure_dirs()
+        self._atomic_write_json(self.health_path, health)
+        return health
+
     def latest_by_route(self) -> dict[str, Any]:
         return self._read_json(self.latest_by_route_path, {})
 
@@ -1008,6 +1068,13 @@ def _default_health() -> dict[str, Any]:
         "last_real_run_at": "",
         "last_smoke_run_at": "",
         "last_deployment_audit_at": "",
+        "last_host_request_at": "",
+        "last_trace_started_at": "",
+        "last_trace_started_run_id": "",
+        "last_trace_finished_at": "",
+        "last_trace_finished_run_id": "",
+        "untraced_request_count": 0,
+        "pending_request_ids": [],
         "deployment_acceptance": {},
     }
 
@@ -1103,8 +1170,8 @@ def compare_runs(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any
     fields = ("input_tokens", "output_tokens", "latency_ms", "answer_tokens")
     deltas = {}
     for field in fields:
-        before_value = int(before.get(field) or 0)
-        after_value = int(after.get(field) or 0)
+        before_value = _semantic_metric(before, field)
+        after_value = _semantic_metric(after, field)
         deltas[field] = {
             "before": before_value,
             "after": after_value,
@@ -1132,6 +1199,142 @@ def compare_runs(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any
         "result": "accepted" if accepted else "rejected",
         "quality_blockers": quality_blockers,
     }
+
+
+def compare_run_groups(
+    runs: list[dict[str, Any]],
+    *,
+    baseline: str,
+    candidate: str,
+    group_by: list[str] | tuple[str, ...] = ("task_type", "route"),
+    minimum_sample_size: int = 3,
+) -> dict[str, Any]:
+    """Compare host versions across equivalent run groups without external dependencies."""
+
+    allowed = {"app", "task_type", "route", "channel"}
+    fields = [str(field) for field in group_by]
+    if not fields or any(field not in allowed for field in fields):
+        raise ValueError(f"group_by must contain only: {', '.join(sorted(allowed))}")
+    selected = {
+        baseline: [
+            run
+            for run in runs
+            if _host_version(run) == baseline
+            and normalize_traffic_type(run.get("traffic_type")) == TRAFFIC_PRODUCTION
+        ],
+        candidate: [
+            run
+            for run in runs
+            if _host_version(run) == candidate
+            and normalize_traffic_type(run.get("traffic_type")) == TRAFFIC_PRODUCTION
+        ],
+    }
+    grouped: dict[tuple[str, ...], dict[str, list[dict[str, Any]]]] = {}
+    for version, version_runs in selected.items():
+        for run in version_runs:
+            key = tuple(str(run.get(field) or "") for field in fields)
+            grouped.setdefault(key, {baseline: [], candidate: []})[version].append(run)
+    comparisons = []
+    for key in sorted(grouped):
+        before = _group_metrics(grouped[key][baseline])
+        after = _group_metrics(grouped[key][candidate])
+        enough_data = before["runs"] >= minimum_sample_size and after["runs"] >= minimum_sample_size
+        deltas = {
+            metric: _metric_delta(before[metric]["p50"], after[metric]["p50"])
+            for metric in ("input_tokens", "output_tokens", "latency_ms")
+        }
+        quality_delta = round(
+            float(after["quality_signal_retention_rate"])
+            - float(before["quality_signal_retention_rate"]),
+            3,
+        )
+        conclusion = _group_conclusion(deltas, quality_delta) if enough_data else "insufficient_data"
+        comparisons.append(
+            {
+                "group": dict(zip(fields, key)),
+                "baseline": before,
+                "candidate": after,
+                "p50_deltas": deltas,
+                "quality_signal_retention_delta": quality_delta,
+                "sample_status": "sufficient" if enough_data else "insufficient_data",
+                "conclusion": conclusion,
+            }
+        )
+    return {
+        "baseline": baseline,
+        "candidate": candidate,
+        "group_by": fields,
+        "minimum_sample_size": minimum_sample_size,
+        "baseline_runs": len(selected[baseline]),
+        "candidate_runs": len(selected[candidate]),
+        "schema_versions": {
+            baseline: _schema_counts(selected[baseline]),
+            candidate: _schema_counts(selected[candidate]),
+        },
+        "compatibility_warning": (
+            "Schema 0.3 and 0.4 token totals use different aggregation semantics. "
+            "Prefer comparisons within the same schema version."
+            if len(set(_schema_counts(selected[baseline])) | set(_schema_counts(selected[candidate]))) > 1
+            else ""
+        ),
+        "groups": comparisons,
+    }
+
+
+def _host_version(run: dict[str, Any]) -> str:
+    return str((run.get("metadata") or {}).get("host_version") or "")
+
+
+def _schema_counts(runs: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for run in runs:
+        version = str(run.get("schema_version") or "legacy")
+        counts[version] = counts.get(version, 0) + 1
+    return counts
+
+
+def _semantic_metric(run: dict[str, Any], metric: str) -> int:
+    usage = run.get("token_usage") or {}
+    semantic_field = {
+        "input_tokens": "billed_model_input_tokens",
+        "output_tokens": "billed_model_output_tokens",
+        "answer_tokens": "final_answer_tokens",
+    }.get(metric)
+    if semantic_field and semantic_field in usage:
+        return int(usage.get(semantic_field) or 0)
+    return int(run.get(metric) or 0)
+
+
+def _group_metrics(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    input_tokens = [_semantic_metric(run, "input_tokens") for run in runs]
+    output_tokens = [_semantic_metric(run, "output_tokens") for run in runs]
+    latency = [int(run.get("latency_ms") or 0) for run in runs]
+    tool_calls = [len(run.get("tool_calls") or []) for run in runs]
+    quality_count = sum(bool(run.get("quality_signals")) for run in runs)
+    count = len(runs)
+    return {
+        "runs": count,
+        "input_tokens": {"p50": _percentile(input_tokens, 0.50), "p95": _percentile(input_tokens, 0.95)},
+        "output_tokens": {"p50": _percentile(output_tokens, 0.50), "p95": _percentile(output_tokens, 0.95)},
+        "latency_ms": {"p50": _percentile(latency, 0.50), "p95": _percentile(latency, 0.95)},
+        "average_tool_calls": round(sum(tool_calls) / count, 3) if count else 0,
+        "quality_signal_retention_rate": round(quality_count / count, 3) if count else 0,
+    }
+
+
+def _metric_delta(before: int, after: int) -> dict[str, Any]:
+    return {"before": before, "after": after, "delta": after - before, "delta_pct": _pct_delta(before, after)}
+
+
+def _group_conclusion(deltas: dict[str, dict[str, Any]], quality_delta: float) -> str:
+    percentages = [item["delta_pct"] for item in deltas.values() if item["delta_pct"] is not None]
+    if quality_delta < 0:
+        return "quality_regressed"
+    if percentages and all(float(value) <= 0 for value in percentages) and any(float(value) < 0 for value in percentages):
+        return "improved"
+    if percentages and any(float(value) > 5 for value in percentages):
+        return "regressed"
+    return "mixed_or_unchanged"
 
 
 def _pct_delta(before: int, after: int) -> float | None:

@@ -1,6 +1,6 @@
 # Version Management
 
-Current version: `0.6.2`
+Current version: `0.7.0`
 
 Release date: 2026-06-12
 
@@ -33,6 +33,34 @@ Each release should record:
 - known limitations
 
 ## Current Release
+
+### 0.7.0
+
+Release date: 2026-06-22
+
+Release goal:
+
+Build a trustworthy Agent optimization loop on explicit token semantics, traffic-aware trace health, and conservative host-version group comparison.
+
+Iteration summary:
+
+TokenSaver 0.7.0 introduces schema 0.4 token breakdowns, provider usage ingestion, first-class tool semantic outcomes, tool-surface cost findings, host request/trace lifecycle health, and baseline/candidate comparisons grouped by task and route.
+
+Compatibility notes:
+
+- Existing schema 0.3 traces remain readable.
+- Existing SDK calls and two-run compare commands remain compatible.
+- Schema 0.4 top-level model token totals intentionally exclude tool payloads and duplicate final answers.
+- No new runtime dependency is required.
+
+Verification:
+
+```text
+0.7 tests: 12 passed
+Governance tests: 3 passed
+Full suite: 101 passed
+Python compile, CLI/API smoke, diff check, and version consistency: passed
+```
 
 ### 0.6.2
 

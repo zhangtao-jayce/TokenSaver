@@ -177,3 +177,42 @@
    - 处置：更新合约测试名称和预期字段；全量重跑 107 项全部通过。
 
 结论：本次开发满足 PRD 测试 SOP，可以进入开发记录和最终验收。
+
+## TEST-20260623-003：TokenSaver 0.8.0 GitHub 与 PyPI 发布验证
+
+- 日期：2026-06-23
+- 对应 PRD：`PRD-20260623-002-v0.8-release.md`
+- 环境：GitHub Actions、PyPI Trusted Publishing、macOS 全新临时虚拟环境
+- 总体结果：通过
+
+执行结果：
+
+1. 发布分支与提交
+   - 分支：`codex/release-v0.8.0`，基于最新 `origin/main`。
+   - 提交：`8b175007ba658a0bae45f6d2eb57962988fd99a0`。
+   - 初次 HTTPS push 因 macOS 默认凭证助手持续挂起而终止；改为本次命令显式使用已登录的 `gh` token、禁用交互提示并强制 HTTP/1.1 后成功。token 未输出或写入仓库。
+2. Draft PR 与自动检查
+   - PR：`https://github.com/zhangtao-jayce/TokenSaver/pull/12`。
+   - CI workflow run `28016283162`：成功。
+   - Benchmark workflow run `28016283071`：成功。
+3. PR 合并
+   - PR 经检查通过后从 draft 标记为 ready。
+   - 使用 squash 合并，预期 head SHA 锁定为 `8b175007ba658a0bae45f6d2eb57962988fd99a0`。
+   - main 合并提交：`80b203f9b97e005bf8999258bc2a4a21dec333c8`。
+4. 标签与 GitHub Release
+   - `v0.8.0` 标签创建并推送，指向 main 合并提交。
+   - GitHub Release：`https://github.com/zhangtao-jayce/TokenSaver/releases/tag/v0.8.0`。
+5. Trusted Publishing
+   - workflow run：`28016386459`。
+   - `build` job：成功。
+   - `publish-pypi` job：成功；使用 GitHub OIDC Trusted Publishing，本地未使用 PyPI token。
+6. PyPI 精确安装
+   - 在全新临时虚拟环境执行 `python -m pip install tokensaver-agent==0.8.0`。
+   - 结果：从 PyPI 下载并成功安装 `tokensaver_agent-0.8.0-py3-none-any.whl`。
+7. PyPI 安装后验证
+   - distribution metadata：`0.8.0`。
+   - `tokensaver.__version__`：`0.8.0`。
+   - `tokensaver version`：返回 `TokenSaver 0.8.0`。
+   - 离线 demo：返回 `ACCEPTED`，生成 benchmark 和 panel。
+
+结论：TokenSaver 0.8.0 已通过 PR CI、合并、标签、GitHub Release、Trusted Publishing 和 PyPI 全新环境安装验证，正式发布成功。

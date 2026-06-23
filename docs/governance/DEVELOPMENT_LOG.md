@@ -134,3 +134,33 @@
 - 本次未修改版本号、受控开发原则或完整性基线，未执行发布和外部写入。
 
 验证结果：专项测试 6 项、关键回归 65 项、治理测试 3 项、全量测试 107 项全部通过；语法检查、离线 pipeline smoke、安装文案检查和 `git diff --check` 通过。测试过程中的两次中间失败及处置已如实记录。详细结果见 `TEST-20260623-001`。
+
+## DEV-20260623-002：提交并发布 TokenSaver 0.8.0
+
+- 日期：2026-06-23
+- 对应 PRD：`docs/governance/prds/PRD-20260623-002-v0.8-release.md`
+- 对应测试记录：`TEST-20260623-002`、`TEST-20260623-003`
+- 状态：成功
+- 发布版本：0.8.0
+- 变更范围：版本元数据、发布分支、GitHub PR/CI、标签、GitHub Release、Trusted Publishing、PyPI 与隔离安装验证
+
+实际结果：
+
+- 依据 SemVer 将兼容的新 SDK API、诊断和输出字段发布为 MINOR 版本 0.8.0。
+- `codex/release-v0.8.0` 经 PR #12 的 CI 与 benchmark 检查后 squash 合并到 `main`。
+- main 发布提交为 `80b203f9b97e005bf8999258bc2a4a21dec333c8`。
+- 创建并推送 `v0.8.0` 标签，创建同名 GitHub Release。
+- GitHub Actions run `28016386459` 的 build 与 `publish-pypi` job 均成功。
+- Trusted Publishing 成功将 `tokensaver-agent==0.8.0` 发布到 PyPI。
+- 全新虚拟环境从 PyPI 精确安装、metadata/import/CLI 版本检查和离线 demo 均通过。
+
+发布决策与风险：
+
+- 使用 GitHub OIDC Trusted Publishing，不在本地处理或保存 PyPI token。
+- PyPI 0.8.0 发布前已确认版本不存在；发布后标签不再移动、版本文件不再覆盖。
+- 默认 macOS HTTPS 凭证助手在 push 时挂起，本次改用已登录 `gh` token 的一次性非交互 credential helper 和 HTTP/1.1 完成推送；未输出 token，未修改仓库凭证配置。
+- schema 继续为 0.4，`handoffs` 为可选 additive 字段；旧 trace 与现有 SDK 保持兼容。
+- 使用方升级失败时回退到 `tokensaver-agent==0.7.0`。
+- 本次未修改受控开发原则或完整性基线，未部署任何外部宿主 Agent。
+
+验证结果：本地专项 6 项、治理 3 项、全量 107 项、构建及本地 wheel 验证通过；PR CI、benchmark、GitHub Release、Trusted Publishing 和 PyPI 全新环境安装全部通过。详细结果见 `TEST-20260623-002` 与 `TEST-20260623-003`。

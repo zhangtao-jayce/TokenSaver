@@ -29,9 +29,35 @@ The offline demo writes a before/after benchmark and local HTML panel to `.token
 Or install it:
 
 ```bash
+python3 --version  # TokenSaver requires Python 3.10+
 python3 -m pip install tokensaver-agent
 tokensaver demo
 tokensaver open
+```
+
+The names used at each layer are intentionally explicit:
+
+| Layer | Name |
+| --- | --- |
+| Product | `TokenSaver` |
+| PyPI distribution | `tokensaver-agent` |
+| Python import | `tokensaver` |
+| CLI | `tokensaver` or `tokensaver-agent` |
+
+If `python3` is older than 3.10, pip may print `No matching distribution found`
+even though the package exists. Select a Python 3.10+ interpreter, or run the
+zero-install checks through `uvx`:
+
+```bash
+uvx tokensaver-agent doctor --offline
+uvx tokensaver-agent demo
+```
+
+PyPI is the supported default installation path. Installing directly from
+GitHub is reserved for an unreleased development version:
+
+```bash
+python3 -m pip install 'git+https://github.com/zhangtao-jayce/TokenSaver.git'
 ```
 
 ```text
@@ -111,7 +137,7 @@ def handle_message(message: str) -> str:
         traffic_type="production_user_run",
         metadata={
             "host_version": APP_VERSION,
-            "tokensaver_version": "0.7.0",
+            "tokensaver_version": "0.8.0",
             "environment": "production",
         },
     ) as run:
@@ -191,6 +217,32 @@ with tokensaver.run(user_message=message, request_id=request_id) as run:
 ```
 
 This distinguishes `idle_no_traffic` from `trace_pipeline_broken`.
+
+## Batch Pipelines And External Agent Handoffs
+
+Pipelines that generate raw files for Codex or Claude Code can record the
+handoff without inventing a model call:
+
+```python
+with tokensaver.run(
+    user_message="Build the daily digest.",
+    task_type="daily_research",
+    route="batch_pipeline",
+) as run:
+    run.record_tool_call("rss_fetch", output_text=raw_items)
+    run.add_handoff(
+        agent="codex",
+        input_artifacts=["output/raw.md", "output/filter_task.md"],
+        expected_output="output/processed.md",
+        status="prepared",
+    )
+    run.record_final_answer("Raw digest prepared for Codex.")
+```
+
+Valid handoff states are `prepared`, `completed`, and `failed`. Artifact paths
+are recorded as identifiers; TokenSaver does not read or upload those files.
+See the offline [research pipeline example](examples/research_pipeline/README.md)
+and its explicit-Python runner template.
 
 Generate a public Markdown report and anonymous SVG card directly from two run files:
 

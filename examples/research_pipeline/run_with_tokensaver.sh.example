@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+# Set this to the same Python 3.10+ interpreter where tokensaver-agent and
+# the host project's dependencies are installed.
+TOKENSAVER_PYTHON="${TOKENSAVER_PYTHON:-python3}"
+
+"$TOKENSAVER_PYTHON" -c "import tokensaver" >/dev/null
+exec "$TOKENSAVER_PYTHON" agent.py "$@"

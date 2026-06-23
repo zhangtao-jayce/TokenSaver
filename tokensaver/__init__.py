@@ -1,6 +1,6 @@
 """TokenSaver local-first Agent runtime ROI utilities."""
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 from .planner import plan_task
 from .runtime import TokenSaver, mark_deployment, read_health, record_agent_run

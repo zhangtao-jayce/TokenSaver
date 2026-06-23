@@ -1,8 +1,8 @@
 # Version Management
 
-Current version: `0.7.0`
+Current version: `0.8.0`
 
-Release date: 2026-06-12
+Release date: 2026-06-23
 
 ## Versioning Rule
 
@@ -33,6 +33,34 @@ Each release should record:
 - known limitations
 
 ## Current Release
+
+### 0.8.0
+
+Release date: 2026-06-23
+
+Release goal:
+
+Remove first-install ambiguity and make batch pipelines with external coding-Agent handoffs observable without misreporting them as model calls.
+
+Iteration summary:
+
+TokenSaver 0.8.0 standardizes the PyPI/Python/CLI onboarding path, adds actionable PATH and custom task-budget diagnostics, introduces first-class external Agent handoff traces, and provides an offline research pipeline plus explicit-Python runner template.
+
+Compatibility notes:
+
+- `handoffs` is an optional additive schema 0.4 field; existing traces remain readable.
+- `AgentRun.add_handoff` and `task_type_missing_budget` are additive public behavior.
+- Handoffs do not contribute to model-call or token accounting.
+- No new runtime dependency is required.
+
+Verification:
+
+```text
+Onboarding/pipeline tests: 6 passed
+Governance tests: 3 passed
+Full suite: 107 passed
+Python compilation, offline pipeline smoke, and diff check: passed
+```
 
 ### 0.7.0
 

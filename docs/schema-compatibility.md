@@ -10,6 +10,7 @@ Additive fields:
 - `token_usage`
 - model call `reasoning_tokens`, `tool_schema_tokens`, and `usage_source`
 - tool call `transport_success`, `semantic_success`, `result_quality`, `error_type`, and `fallback_used`
+- optional top-level `handoffs` for external Agent handoff records
 
 `token_usage` separates:
 
@@ -22,6 +23,10 @@ Additive fields:
 For schema 0.4 SDK traces, top-level `input_tokens` and `output_tokens` mean model input and model output totals. They do not add tool payloads or a duplicate final answer. Schema 0.3 traces retain their recorded historical values.
 
 Externally supplied traces without `schema_version` continue to default to schema 0.3 so TokenSaver does not silently reinterpret historical aggregation semantics.
+
+`handoffs` is additive and defaults to an empty list. A handoff records an
+external Agent, artifact identifiers, expected output, status, and optional
+metadata. It is not a `model_call` and does not change token accounting.
 
 ## Traffic Compatibility
 

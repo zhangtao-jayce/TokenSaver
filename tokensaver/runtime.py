@@ -20,6 +20,7 @@ from .task_classifier import classify_task
 from .tokenizer import estimate_tokens
 
 FailureCallback = Callable[[dict[str, Any]], None]
+HANDOFF_STATUSES = {"prepared", "completed", "failed"}
 
 
 class TokenSaver:
@@ -149,6 +150,7 @@ class AgentRun:
             "context_items": [],
             "tool_calls": [],
             "model_calls": [],
+            "handoffs": [],
             "budget": {},
             "quality_requirements": [],
             "quality_signals": {},
@@ -297,6 +299,42 @@ class AgentRun:
             self._run["channel"] = channel
         self.record_answer(answer)
 
+    def add_handoff(
+        self,
+        *,
+        agent: str,
+        input_artifacts: list[str] | tuple[str, ...] | None = None,
+        instruction: str = "",
+        expected_output: str = "",
+        status: str = "prepared",
+        output_artifacts: list[str] | tuple[str, ...] | None = None,
+        metadata: dict[str, Any] | None = None,
+        mode: str = "external_agent_handoff",
+    ) -> None:
+        """Record a local handoff to an external Agent without creating a model call."""
+
+        try:
+            if status not in HANDOFF_STATUSES:
+                raise ValueError(
+                    f"Unsupported handoff status: {status!r}; "
+                    f"expected one of {sorted(HANDOFF_STATUSES)}"
+                )
+            self._run["handoffs"].append(
+                {
+                    "agent": str(agent),
+                    "mode": str(mode or "external_agent_handoff"),
+                    "input_artifacts": [str(item) for item in input_artifacts or []],
+                    "instruction": str(instruction),
+                    "expected_output": str(expected_output),
+                    "status": status,
+                    "output_artifacts": [str(item) for item in output_artifacts or []],
+                    "metadata": dict(metadata or {}),
+                }
+            )
+        except Exception as exc:
+            self._trace_failure("handoff_trace", exc)
+            raise
+
     def add_quality_signal(self, name: str, value: Any = True) -> None:
         self._run["quality_signals"][name] = value
 
@@ -364,6 +402,7 @@ def record_agent_run(
     normalized.setdefault("context_items", [])
     normalized.setdefault("tool_calls", [])
     normalized.setdefault("model_calls", [])
+    normalized.setdefault("handoffs", [])
     normalized.setdefault("budget", {})
     normalized.setdefault("quality_requirements", [])
     normalized.setdefault("quality_signals", {})
@@ -375,6 +414,7 @@ def record_agent_run(
     _normalize_context_items(normalized)
     _normalize_tool_calls(normalized)
     _normalize_model_calls(normalized)
+    _normalize_handoffs(normalized)
     supplied_usage = normalized.get("token_usage") or {}
     if "input_tokens" not in normalized and "billed_model_input_tokens" in supplied_usage:
         normalized["input_tokens"] = int(supplied_usage.get("billed_model_input_tokens") or 0)
@@ -500,6 +540,40 @@ def _normalize_model_calls(run: dict[str, Any]) -> None:
             call["output_tokens"] = estimate_tokens(str(call.get("output_text") or ""))
         call.pop("input_text", None)
         call.pop("output_text", None)
+
+
+def _normalize_handoffs(run: dict[str, Any]) -> None:
+    normalized: list[dict[str, Any]] = []
+    for item in run.get("handoffs") or []:
+        if not isinstance(item, dict):
+            raise ValueError("Each handoff must be an object.")
+        status = str(item.get("status") or "prepared")
+        if status not in HANDOFF_STATUSES:
+            raise ValueError(
+                f"Unsupported handoff status: {status!r}; "
+                f"expected one of {sorted(HANDOFF_STATUSES)}"
+            )
+        normalized.append(
+            {
+                "agent": str(item.get("agent") or "external_agent"),
+                "mode": str(item.get("mode") or "external_agent_handoff"),
+                "input_artifacts": _artifact_list(item.get("input_artifacts")),
+                "instruction": str(item.get("instruction") or ""),
+                "expected_output": str(item.get("expected_output") or ""),
+                "status": status,
+                "output_artifacts": _artifact_list(item.get("output_artifacts")),
+                "metadata": dict(item.get("metadata") or {}),
+            }
+        )
+    run["handoffs"] = normalized
+
+
+def _artifact_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (str, Path)):
+        return [str(value)]
+    return [str(item) for item in value]
 
 
 def _build_failure_reporter(

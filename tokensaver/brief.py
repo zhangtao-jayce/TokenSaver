@@ -39,6 +39,16 @@ def generate_run_summary(
                 f"- latency_ms: {budget.get('latency_ms', '')}",
             ]
         )
+    handoffs = list(run.get("handoffs") or [])
+    if handoffs:
+        lines.extend(["", "## External Agent Handoffs", ""])
+        for handoff in handoffs:
+            lines.append(
+                "- "
+                f"{handoff.get('agent', 'external_agent')}: "
+                f"{handoff.get('status', 'prepared')}"
+                f"; expected_output={handoff.get('expected_output') or 'unspecified'}"
+            )
     token_usage = run.get("token_usage") or {}
     if token_usage:
         lines.extend(["", "## Token Breakdown", ""])
@@ -104,6 +114,7 @@ def generate_repair_brief(
     task_type = run.get("task_type") or "unknown"
     route = run.get("route") or "unknown"
     required_fields = list(run.get("quality_requirements") or diagnosis.get("quality_guardrail_fields") or [])
+    handoffs = list(run.get("handoffs") or [])
 
     lines = [
         f"# TokenSaver Repair Brief",
@@ -134,6 +145,18 @@ def generate_repair_brief(
                 f"- token_usage_source: {token_usage.get('source', 'estimated')}",
             ]
         )
+
+    if handoffs:
+        lines.extend(["", "## External Agent Handoffs", ""])
+        for handoff in handoffs:
+            inputs = ", ".join(str(item) for item in handoff.get("input_artifacts") or [])
+            lines.append(
+                "- "
+                f"agent={handoff.get('agent', 'external_agent')}; "
+                f"status={handoff.get('status', 'prepared')}; "
+                f"inputs={inputs or 'unspecified'}; "
+                f"expected_output={handoff.get('expected_output') or 'unspecified'}"
+            )
 
     consumers = diagnosis.get("top_token_consumers") or []
     if consumers:

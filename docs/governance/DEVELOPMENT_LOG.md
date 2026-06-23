@@ -96,3 +96,41 @@
 - Goldfinger 升级必须精确 pin `tokensaver-agent==0.7.0`；如验收失败，回退到 `0.6.2`。
 
 验证结果：完整发布 SOP 全部通过，详细证据见 `TEST-20260622-003`。
+
+## DEV-20260623-001：首次安装、Pipeline 与外部 Agent 交接体验
+
+- 日期：2026-06-23
+- 对应 PRD：`docs/governance/prds/PRD-20260623-001-onboarding-pipeline-handoff.md`
+- 对应测试记录：`TEST-20260623-001`
+- 状态：成功
+- 变更范围：安装引导、doctor PATH 建议、task type 预算诊断、外部 Agent handoff trace、报告/brief/panel、pipeline 示例、runner 模板、schema 文档和测试
+
+关键设计决策：
+
+- 普通用户安装路径统一为 PyPI，`uvx` 用于零安装 demo/doctor，GitHub 安装仅用于未发布开发版。
+- 安装前诊断通过 Python 版本检查和 `uvx` 解决；不增加一个只有安装成功后才能运行的伪“安装前 doctor”。
+- `task_type_mismatch` 保持 caller/inferred 分类冲突语义；新增 `task_type_missing_budget` 表示自定义任务回落到默认预算。
+- 预算策略不自动写入 profile，只输出确定性、可审查的 YAML 建议。
+- external Agent handoff 使用独立 `handoffs` 字段和 `add_handoff` API，不伪装成 model call，不改变 token 统计。
+- runner 采用显式 Python 的模板，不自动修改 PATH、shell 配置或用户项目文件。
+
+实际变更：
+
+- README 与集成指南新增四层命名映射、Python 3.10+ 预检、低版本 pip 报错解释、PyPI/uvx/GitHub 安装优先级。
+- doctor 的 PATH finding 新增 shell-quoted `export PATH` 命令和当前 Python 模块入口。
+- 新增 `task_type_missing_budget` finding，提供实际 fallback budget 证据和 profile YAML patch。
+- SDK 新增 `AgentRun.add_handoff`，支持 `prepared`、`completed`、`failed` 状态、artifact 标识、预期输出和 metadata。
+- 外部 JSON trace 支持 handoff 规范化；`handoffs` 加入标准集成字段。
+- run summary、repair brief 和本地 panel 显示 handoff，同时保持 model/token 统计隔离。
+- 新增离线 research pipeline 示例及 `TOKENSAVER_PYTHON` runner 模板。
+- 更新 schema 兼容说明、Unreleased changelog、集成字段合约和 6 项专项测试。
+
+兼容性与风险：
+
+- `handoffs` 和新 finding code 均为 additive；旧 schema 0.3/0.4 trace 和既有 SDK API 保持可用。
+- handoff instruction 仍是本地 trace 数据，调用方可省略该字段并只记录 artifact 标识；TokenSaver 不读取或上传 artifact 文件。
+- 新 finding 会使没有专属预算且没有显式 run budget 的自定义 task type 显示 medium 提示，这是预期的可观测性变化。
+- runner 模板面向 POSIX shell，不承担 Python 安装和环境管理。
+- 本次未修改版本号、受控开发原则或完整性基线，未执行发布和外部写入。
+
+验证结果：专项测试 6 项、关键回归 65 项、治理测试 3 项、全量测试 107 项全部通过；语法检查、离线 pipeline smoke、安装文案检查和 `git diff --check` 通过。测试过程中的两次中间失败及处置已如实记录。详细结果见 `TEST-20260623-001`。

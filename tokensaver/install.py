@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import importlib.metadata
 import re
+import shlex
 import shutil
 import site
 import subprocess
@@ -55,6 +56,7 @@ def verbose_version_info(*, project_dir: str | Path = ".") -> dict[str, Any]:
         "cli_script_path": candidate_script,
         "cli_script_on_path": script_path is not None,
         "cli_script_dir": str(Path(candidate_script).parent),
+        "path_export_command": path_export_command(Path(candidate_script).parent),
         "tokensaver_mcp_on_path": shutil.which("tokensaver-mcp") is not None,
         "project_dir": str(Path(project_dir).resolve()),
         "project_pins": scan_project_pins(project_dir),
@@ -98,8 +100,14 @@ def doctor(
                 code="cli_script_not_on_path",
                 severity="medium",
                 message="The tokensaver console script is not on PATH.",
-                evidence={"cli_script_dir": info["cli_script_dir"]},
-                recommendation=f'Use "python3 -m tokensaver.cli ..." or add {info["cli_script_dir"]} to PATH.',
+                evidence={
+                    "cli_script_dir": info["cli_script_dir"],
+                    "path_export_command": info["path_export_command"],
+                },
+                recommendation=(
+                    f'Use {shlex.quote(str(info["python_executable"]))} -m tokensaver.cli ... or run '
+                    f'{info["path_export_command"]} in this POSIX shell.'
+                ),
             )
         )
 
@@ -167,6 +175,12 @@ def doctor(
         "findings": combined_findings,
         "upgrade_command": build_upgrade_command(commit=current_commit or None),
     }
+
+
+def path_export_command(script_dir: str | Path) -> str:
+    """Return a copyable POSIX-shell command for adding a script directory to PATH."""
+
+    return f'export PATH={shlex.quote(str(script_dir))}:"$PATH"'
 
 
 def verify_install(

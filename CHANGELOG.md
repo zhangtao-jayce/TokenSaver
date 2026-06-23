@@ -2,6 +2,22 @@
 
 All notable changes to TokenSaver are recorded here.
 
+## 0.8.0 - 2026-06-23
+
+### Added
+
+- First-class external Agent handoff tracing for batch and research pipelines.
+- `task_type_missing_budget` diagnosis with a reviewable profile budget patch.
+- Offline research pipeline example and explicit-Python runner template.
+
+### Changed
+
+- Installation guidance now consistently prefers PyPI, checks Python 3.10+
+  before install, and reserves GitHub installation for development versions.
+- Doctor PATH findings include a copyable, shell-quoted export command.
+- Reports, repair briefs, and the local panel expose handoff activity without
+  counting it as model usage.
+
 ## 0.7.0 - 2026-06-22
 
 ### Added

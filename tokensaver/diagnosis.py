@@ -209,6 +209,7 @@ def diagnose_run(run: dict[str, Any], *, profile: dict[str, Any] | None = None) 
     )
     _add_trace_completeness_findings(findings, run)
     _add_task_type_mismatch_finding(findings, run, profile=profile)
+    _add_task_type_missing_budget_finding(findings, run, profile=profile)
 
     codes = [finding.code for finding in findings]
     dimensions = _score_dimensions(
@@ -443,6 +444,40 @@ def _add_task_type_mismatch_finding(
             recommendation="Review the caller classification and choose the task type whose budget and route match the request.",
             owner_area="router/profile",
             impact="Classification conflicts can silently apply the wrong route and token budget.",
+        )
+    )
+
+
+def _add_task_type_missing_budget_finding(
+    findings: list[DiagnosisFinding],
+    run: dict[str, Any],
+    *,
+    profile: dict[str, Any],
+) -> None:
+    task_type = str(run.get("task_type") or "unknown")
+    budgets = profile.get("budgets") or {}
+    explicit_budget = run.get("budget") or (run.get("metadata") or {}).get("budget") or {}
+    fallback = budgets.get("default")
+    if task_type in budgets or explicit_budget or not fallback:
+        return
+    yaml_lines = [f"{task_type}:"]
+    for field in ("input_tokens", "output_tokens", "latency_ms"):
+        yaml_lines.append(f"  {field}: {int(fallback.get(field) or 0)}")
+    findings.append(
+        DiagnosisFinding(
+            code="task_type_missing_budget",
+            severity="medium",
+            message="This task type has no dedicated profile budget and is using the default budget.",
+            evidence={
+                "task_type": task_type,
+                "fallback_budget": dict(fallback),
+            },
+            recommendation=(
+                "Review the default values, then add this entry under budgets in the profile:\n"
+                + "\n".join(yaml_lines)
+            ),
+            owner_area="router/profile",
+            impact="A generic budget can hide task-specific token or latency regressions.",
         )
     )
 

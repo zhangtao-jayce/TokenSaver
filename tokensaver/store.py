@@ -722,6 +722,7 @@ class LocalStore:
         {_metric("Latency", f"{int(latest.get('latency_ms') or 0)}ms")}
         {_metric("Model Calls", len(latest.get("model_calls") or []))}
         {_metric("Tool Calls", len(latest.get("tool_calls") or []))}
+        {_metric("Handoffs", len(latest.get("handoffs") or []))}
       </div>
     </section>
 

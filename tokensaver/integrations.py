@@ -26,6 +26,7 @@ STANDARD_RUN_FIELDS = [
     "context_items",
     "tool_calls",
     "model_calls",
+    "handoffs",
     "answer",
     "token_usage",
     "quality_signals",
